@@ -588,6 +588,75 @@ export async function openScript({ name }) {
   return { success: true, name: result.name, script_id: result.id, lines: result.lines, source: 'internal_api', opened: true };
 }
 
+/**
+ * Switch Pine editor to a different saved script via UI dropdown.
+ * This properly switches the editor context (unlike openScript which just sets code).
+ *
+ * Steps: click nameButton → find script in dropdown → click at coordinates → verify
+ */
+export async function switchScript({ name }) {
+  const editorReady = await ensurePineEditorOpen();
+  if (!editorReady) throw new Error('Could not open Pine Editor.');
+
+  // 1. Click the nameButton dropdown
+  const dropdownOpened = await evaluate(`
+    (function() {
+      var btn = document.querySelector('[class*="nameButton"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()
+  `);
+  if (!dropdownOpened) throw new Error('Could not find Pine editor nameButton dropdown');
+
+  await new Promise(r => setTimeout(r, 500));
+
+  // 2. Find target script coordinates in the dropdown
+  const escapedName = JSON.stringify(name);
+  const coords = await evaluate(`
+    (function() {
+      var target = ${escapedName};
+      var allEls = document.querySelectorAll('*');
+      for (var el of allEls) {
+        var t = (el.textContent || '').trim();
+        if (t === target && el.offsetParent !== null && el.offsetHeight > 15 && el.offsetHeight < 40 && el.childElementCount <= 1) {
+          var rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        }
+      }
+      return null;
+    })()
+  `);
+
+  if (!coords) {
+    // Close dropdown
+    await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+    throw new Error('Script "' + name + '" not found in dropdown. Check pine_list_scripts for available names.');
+  }
+
+  // 3. Click at coordinates
+  const c = await getClient();
+  await c.Input.dispatchMouseEvent({ type: 'mousePressed', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+  await c.Input.dispatchMouseEvent({ type: 'mouseReleased', x: coords.x, y: coords.y, button: 'left', clickCount: 1 });
+
+  await new Promise(r => setTimeout(r, 1000));
+
+  // 4. Verify switch
+  const currentName = await evaluate(`
+    (function() {
+      var btn = document.querySelector('[class*="nameButton"]');
+      return btn ? btn.textContent.trim() : 'unknown';
+    })()
+  `);
+
+  return {
+    success: currentName === name,
+    requested: name,
+    current: currentName,
+    coords,
+  };
+}
+
 export async function listScripts() {
   const scripts = await evaluateAsync(`
     fetch('https://pine-facade.tradingview.com/pine-facade/list/?filter=saved', { credentials: 'include' })
