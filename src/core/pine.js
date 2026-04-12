@@ -598,6 +598,17 @@ export async function switchScript({ name }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
 
+  // 0. Short-circuit: if already on the target script, skip the switch
+  const currentBefore = await evaluate(`
+    (function() {
+      var btn = document.querySelector('[class*="nameButton"]');
+      return btn ? btn.textContent.trim() : null;
+    })()
+  `);
+  if (currentBefore === name) {
+    return { success: true, requested: name, current: name, shortCircuited: true };
+  }
+
   // 1. Click the nameButton dropdown
   const dropdownOpened = await evaluate(`
     (function() {
@@ -641,7 +652,7 @@ export async function switchScript({ name }) {
 
   await new Promise(r => setTimeout(r, 1000));
 
-  // 4. Verify switch
+  // 4. Verify switch — throw on failure instead of returning success:false
   const currentName = await evaluate(`
     (function() {
       var btn = document.querySelector('[class*="nameButton"]');
@@ -649,8 +660,15 @@ export async function switchScript({ name }) {
     })()
   `);
 
+  if (currentName !== name) {
+    throw new Error(
+      `switchScript failed: requested "${name}" but nameButton shows "${currentName}". ` +
+      `The dropdown click at (${coords.x}, ${coords.y}) may have missed the target.`
+    );
+  }
+
   return {
-    success: currentName === name,
+    success: true,
     requested: name,
     current: currentName,
     coords,

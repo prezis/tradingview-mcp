@@ -7,7 +7,7 @@ register('quote', {
 });
 
 register('ohlcv', {
-  description: 'Get OHLCV bar data',
+  description: 'Get OHLCV bar data (default 100 bars, max 500). Use "ohlcv-full" for ALL loaded bars.',
   options: {
     count: { type: 'string', short: 'n', description: 'Number of bars (default 100, max 500)' },
     summary: { type: 'boolean', short: 's', description: 'Return summary stats instead of all bars' },
@@ -16,6 +16,14 @@ register('ohlcv', {
     count: opts.count ? Number(opts.count) : undefined,
     summary: opts.summary,
   }),
+});
+
+register('ohlcv-full', {
+  description: 'Get ALL loaded OHLCV bars (300-400+ on daily). Uses TV internal data API.',
+  options: {
+    summary: { type: 'boolean', short: 's', description: 'Return summary stats instead of all bars' },
+  },
+  handler: (opts) => core.getFullOHLCV({ summary: opts.summary }),
 });
 
 register('values', {

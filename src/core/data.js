@@ -106,6 +106,62 @@ export async function getOhlcv({ count, summary } = {}) {
   return { success: true, bar_count: data.bars.length, total_available: data.total_bars, source: data.source, bars: data.bars };
 }
 
+/**
+ * Get ALL loaded OHLCV bars from the chart using TV's internal data API.
+ *
+ * The standard getOhlcv() uses bars().valueAt(i) which caps at ~100-500 bars.
+ * This function uses mainSeries().data().each() which iterates over ALL bars
+ * loaded in the chart (typically 300-411 on daily, or more).
+ *
+ * @param {{ summary?: boolean }} options
+ * @returns {{ success, bar_count, source, bars|summary_stats }}
+ */
+export async function getFullOHLCV({ summary } = {}) {
+  let data;
+  try {
+    data = await evaluate(`
+      (function() {
+        var chart = window.TradingViewApi._activeChartWidgetWV.value();
+        var cw = chart._chartWidget;
+        var m = cw._model || cw.model();
+        var s = m.mainSeries();
+        var d = s.data();
+        var result = [];
+        d.each(function(i, b) {
+          result.push({time: b[0], open: b[1], high: b[2], low: b[3], close: b[4], volume: b[5] || 0});
+        });
+        return {bars: result, source: 'internal_data_each'};
+      })()
+    `);
+  } catch { data = null; }
+
+  if (!data || !data.bars || data.bars.length === 0) {
+    throw new Error('Could not extract full OHLCV data. The chart may still be loading.');
+  }
+
+  if (summary) {
+    const bars = data.bars;
+    const highs = bars.map(b => b.high);
+    const lows = bars.map(b => b.low);
+    const volumes = bars.map(b => b.volume);
+    const first = bars[0];
+    const last = bars[bars.length - 1];
+    return {
+      success: true, bar_count: bars.length,
+      period: { from: first.time, to: last.time },
+      open: first.open, close: last.close,
+      high: Math.max(...highs), low: Math.min(...lows),
+      range: Math.round((Math.max(...highs) - Math.min(...lows)) * 100) / 100,
+      change: Math.round((last.close - first.open) * 100) / 100,
+      change_pct: Math.round(((last.close - first.open) / first.open) * 10000) / 100 + '%',
+      avg_volume: Math.round(volumes.reduce((a, b) => a + b, 0) / volumes.length),
+      last_5_bars: bars.slice(-5),
+    };
+  }
+
+  return { success: true, bar_count: data.bars.length, source: data.source, bars: data.bars };
+}
+
 export async function getIndicator({ entity_id }) {
   const data = await evaluate(`
     (function() {

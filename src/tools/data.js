@@ -3,11 +3,18 @@ import { jsonResult } from './_format.js';
 import * as core from '../core/data.js';
 
 export function registerDataTools(server) {
-  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context).', {
+  server.tool('data_get_ohlcv', 'Get OHLCV bar data from the chart. Use summary=true for compact stats instead of all bars (saves context). Limited to count bars (default 100, max 500). For ALL loaded bars, use data_get_full_ohlcv instead.', {
     count: z.coerce.number().optional().describe('Number of bars to retrieve (max 500, default 100)'),
     summary: z.coerce.boolean().optional().describe('Return summary stats (high, low, open, close, avg volume, range) instead of all bars — much smaller output'),
   }, async ({ count, summary }) => {
     try { return jsonResult(await core.getOhlcv({ count, summary })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
+
+  server.tool('data_get_full_ohlcv', 'Get ALL loaded OHLCV bars from the chart (300-400+ bars on daily). Uses TV internal data API to bypass the 100-bar limit of data_get_ohlcv. Use summary=true for compact stats.', {
+    summary: z.coerce.boolean().optional().describe('Return summary stats instead of all bars'),
+  }, async ({ summary }) => {
+    try { return jsonResult(await core.getFullOHLCV({ summary })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

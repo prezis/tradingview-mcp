@@ -3,10 +3,25 @@
  * built-in study management via TradingView internal APIs.
  */
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
-import { FIND_MONACO, ensurePineEditorOpen } from './pine.js';
+import { FIND_MONACO, ensurePineEditorOpen, switchScript } from './pine.js';
 import { readFile } from 'node:fs/promises';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
+
+// ── Helper: read the active script name from the Pine editor nameButton ──
+
+/**
+ * Returns the text of the Pine editor's nameButton (the active script name).
+ * @returns {Promise<string|null>}  Script name or null if not found.
+ */
+export async function getActiveScriptName() {
+  return evaluate(`
+    (function() {
+      var btn = document.querySelector('[class*="nameButton"]');
+      return btn ? btn.textContent.trim() : null;
+    })()
+  `);
+}
 
 // ── 1. deployScript ──
 
@@ -160,10 +175,14 @@ export async function deployScript({ pinePath }) {
     ? postState.studyCount > studiesBefore
     : null;
 
+  // Read the nameButton to confirm which script slot we actually saved to
+  const savedAs = await getActiveScriptName();
+
   return {
     success: (errors || []).length === 0,
     errors: errors || [],
     studyAdded,
+    savedAs,
     paneCount: postState.paneCount,
     buttonClicked: addClicked || 'keyboard_shortcut',
     saveMethod: saveClicked ? 'saveButton_class' : 'ctrl_s',
@@ -174,14 +193,14 @@ export async function deployScript({ pinePath }) {
 
 /**
  * Deploy multiple Pine scripts to chart as separate indicators.
- * Key insight: after deploying script A, use pine "open" on a SAVED script
- * to switch editor context, then deploy script B in the new context.
+ * For i > 0, uses switchScript (UI dropdown click + verification) to
+ * switch the editor to the correct saved script slot before deploying.
  *
  * @param {Array<{pinePath: string, savedScriptName?: string}>} scripts
  *   Array of scripts to deploy. First one deploys normally.
- *   Subsequent ones need savedScriptName — an existing saved script
- *   to "open" first (creates a new editor context) before deploying.
- * @returns {{ success, results: Array }}
+ *   Subsequent ones MUST have savedScriptName — the name of an existing
+ *   saved script to switch to before deploying into that slot.
+ * @returns {{ success, results: Array, finalStudies: string[] }}
  */
 export async function deployMultipleScripts({ scripts }) {
   if (!scripts || scripts.length === 0) throw new Error('No scripts provided');
@@ -192,65 +211,37 @@ export async function deployMultipleScripts({ scripts }) {
     const { pinePath, savedScriptName } = scripts[i];
 
     if (i > 0) {
-      // Switch editor context by opening a saved script first
-      // This detaches the previous script from the editor
-      if (savedScriptName) {
-        const openResult = await evaluate(`
-          (function() {
-            try {
-              var scripts = TradingView.bottomWidgetBar.scriptEditor.getOpenedScripts
-                ? TradingView.bottomWidgetBar.scriptEditor.getOpenedScripts()
-                : null;
-              return scripts ? JSON.stringify(scripts) : 'no_api';
-            } catch(e) { return 'err:' + e.message; }
-          })()
-        `);
-        // Use pine open via internal API
-        const opened = await evaluate(`
-          (function() {
-            try {
-              var api = window.TradingViewApi;
-              if (api && api._pineScriptsAPI) {
-                var scripts = api._pineScriptsAPI.getScripts();
-                for (var s of scripts) {
-                  if (s.name.includes(${JSON.stringify(savedScriptName)})) {
-                    api._pineScriptsAPI.openScript(s.id);
-                    return 'opened: ' + s.name;
-                  }
-                }
-              }
-              return 'no_api';
-            } catch(e) { return 'err:' + e.message; }
-          })()
-        `);
+      // For scripts after the first, we must switch editor context
+      if (!savedScriptName) {
+        throw new Error(
+          `scripts[${i}] (${pinePath}): savedScriptName is required for all scripts after the first. ` +
+          `The editor needs a target script slot to switch to before deploying.`
+        );
+      }
 
-        if (opened === 'no_api' || (opened && opened.startsWith('err'))) {
-          // Fallback: use Ctrl+N to create new blank indicator
-          await evaluate(`
-            document.dispatchEvent(new KeyboardEvent('keydown', {key:'n', ctrlKey:true, bubbles:true}))
-          `);
-          await new Promise(r => setTimeout(r, 1000));
-          // Click "Indicator" in the menu
-          await evaluate(`
-            (function() {
-              var items = document.querySelectorAll('[role="menuitem"], [class*="item"], div, span');
-              for (var item of items) {
-                var t = (item.textContent||'').trim().toLowerCase();
-                if (t === 'indicator' || t === 'indicators' || t === 'wskaźnik') {
-                  item.click(); return;
-                }
-              }
-            })()
-          `);
-          await new Promise(r => setTimeout(r, 1500));
-        } else {
-          await new Promise(r => setTimeout(r, 1500));
-        }
+      // Use the proven switchScript from pine.js (nameButton dropdown + CDP mouse click + verify)
+      const switchResult = await switchScript({ name: savedScriptName });
+      if (!switchResult.success) {
+        throw new Error(
+          `Failed to switch editor to "${savedScriptName}" before deploying ${pinePath}. ` +
+          `nameButton shows "${switchResult.current}" instead. ` +
+          `Available scripts can be checked with pine_list_scripts.`
+        );
       }
     }
 
-    // Deploy this script
+    // Deploy this script into the current editor slot
     const result = await deployScript({ pinePath });
+
+    // Verify we saved to the expected slot (for i > 0)
+    if (i > 0 && savedScriptName && result.savedAs && result.savedAs !== savedScriptName) {
+      // The deploy went to a different slot than intended — warn but don't fail
+      result._slotMismatch = {
+        expected: savedScriptName,
+        actual: result.savedAs,
+      };
+    }
+
     results.push({ pinePath, ...result });
 
     if (!result.success) break;

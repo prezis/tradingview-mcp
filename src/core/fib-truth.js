@@ -14,10 +14,11 @@ export async function getExactWicks() {
   const result = await evaluate(`
     (function(){
       var chart = window.TradingViewApi._activeChartWidgetWV.value();
-      var m = chart._chartWidget._model || chart._chartWidget.model();
+      var cw = chart._chartWidget;
+      var m = cw._model || cw.model();
       var s = m.mainSeries();
       var d = s.data();
-      var maxH=0, minL=999, maxT=0, minT=0, n=0, firstT=0, lastT=0;
+      var maxH=-Infinity, minL=Infinity, maxT=0, minT=0, n=0, firstT=0, lastT=0;
       d.each(function(i,b){
         n++;
         if(n===1) firstT=b[0];
