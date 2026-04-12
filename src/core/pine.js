@@ -6,7 +6,7 @@
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 
 // ── Monaco finder (injected into TV page) ──
-const FIND_MONACO = `
+export const FIND_MONACO = `
   (function findMonacoEditor() {
     var container = document.querySelector('.monaco-editor.pine-editor-monaco');
     if (!container) return null;
