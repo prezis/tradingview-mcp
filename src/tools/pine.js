@@ -72,4 +72,11 @@ export function registerPineTools(server) {
     try { return jsonResult(await core.check({ source })); }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
+
+  server.tool('pine_switch_script', 'Switch Pine editor to a different script using the UI dropdown (reliable, unlike pine_open which only fetches code)', {
+    name: z.string().describe('Name of the script to switch to in Pine editor'),
+  }, async ({ name }) => {
+    try { return jsonResult(await core.switchScript({ name })); }
+    catch (err) { return jsonResult({ success: false, error: err.message }, true); }
+  });
 }
