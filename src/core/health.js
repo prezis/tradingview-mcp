@@ -6,8 +6,32 @@ import { existsSync } from 'fs';
 import { execSync, spawn } from 'child_process';
 
 export async function healthCheck() {
-  await getClient();
-  const target = await getTargetInfo();
+  let cdpClient;
+  try {
+    cdpClient = await getClient();
+  } catch (err) {
+    return {
+      success: false,
+      cdp_connected: false,
+      error: err.message,
+      hint: 'Is TradingView Desktop running and logged in? '
+        + 'It must be launched with --remote-debugging-port=9222. '
+        + 'If TV was restarted, the MCP server (Claude Code session) needs a restart too.',
+    };
+  }
+
+  let target;
+  try {
+    target = await getTargetInfo();
+  } catch (err) {
+    return {
+      success: false,
+      cdp_connected: true,
+      error: `Could not find chart target: ${err.message}`,
+      hint: 'CDP is reachable but no TradingView chart page was found. '
+        + 'Make sure a chart is open (not the login screen or settings page).',
+    };
+  }
 
   const state = await evaluate(`
     (function() {

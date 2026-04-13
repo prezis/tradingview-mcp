@@ -67,7 +67,11 @@ export async function connect() {
     try {
       const target = await findChartTarget();
       if (!target) {
-        throw new Error('No TradingView chart target found. Is TradingView open with a chart?');
+        throw new Error(
+          'No TradingView chart target found.\n' +
+          'Is TradingView Desktop running and logged in with a chart page open?\n' +
+          'The MCP server looks for pages with "tradingview.com/chart" in the URL.'
+        );
       }
       targetInfo = target;
       client = await CDP({ host: CDP_HOST, port: CDP_PORT, target: target.id });
@@ -84,7 +88,14 @@ export async function connect() {
       await new Promise(r => setTimeout(r, delay));
     }
   }
-  throw new Error(`CDP connection failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+  throw new Error(
+    `CDP connection failed after ${MAX_RETRIES} attempts: ${lastError?.message}\n` +
+    `Troubleshooting:\n` +
+    `  1. Is TradingView Desktop running and logged in?\n` +
+    `  2. Was it launched with --remote-debugging-port=${CDP_PORT}?\n` +
+    `  3. Is port ${CDP_PORT} reachable? (check: curl http://localhost:${CDP_PORT}/json/version)\n` +
+    `  4. If TV was restarted, the MCP server needs a restart too (new CDP target ID).`
+  );
 }
 
 async function findChartTarget() {
