@@ -2,6 +2,23 @@
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
+## ⚠️ Pine editor — read this BEFORE any pine_* call
+
+**The single most-important doc in this repo:** `docs/PINE_EDITOR_WORKFLOW.md`.
+
+It's the canonical guide on how to drive the Pine editor without overwriting the wrong slot. Written 2026-04-23 after we destroyed an RSI pane slot by skipping the pre-flight check. Covers:
+
+- The mental model (slot vs editor buffer vs indicator title — three things that look the same and aren't)
+- Pre-flight checks (always run before any write)
+- Decision tree (Edit existing / Create new Indicator / Strategy / Library / Built-in / Read-only / Rename)
+- Recipes A–G with step-by-step verified procedures
+- Top 10 anti-patterns (do NOT do these)
+- Recovery procedure if you DID overwrite the wrong slot
+
+Companion doc: `docs/PINE_EDITOR_GOTCHAS.md` — known failure modes and bugs (the "what NOT to do" list).
+
+If you skip these and call `pine_set_source` blindly, you risk an unrecoverable slot overwrite. The Recipes in WORKFLOW.md take 30 seconds longer per write but cost nothing compared to manual restoration from TV's version history (Pro+ only) or from local repo grep.
+
 ## Decision Tree — Which Tool When
 
 ### "What's on my chart right now?"

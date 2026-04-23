@@ -168,6 +168,44 @@ with sync_playwright() as p:
 
 **Workaround**: Drive CDP on the running Desktop app (which is exactly the architecture this MCP server uses). Never open a second authenticated TV session in parallel.
 
+## 17. First save of an Untitled buffer = TV auto-derives slot name from `indicator(...)` title
+
+**Verified 2026-04-23 with two independent live tests on TradingView Desktop.**
+
+When the Pine editor shows `Untitled script` in nameButton (a fresh blank buffer from "Create new → Indicator"), pressing Ctrl+S does NOT open a "name your script" dialog. TV silently saves and **auto-derives the slot name from the title argument** in the source's `indicator(...)` / `strategy(...)` / `library(...)` declaration.
+
+**Reproduction (caused our "My script" leftover slot today)**:
+```
+1. Click Create new → Indicator    # editor body becomes:
+                                    #   //@version=6
+                                    #   indicator("My script")    ← TV will read this
+                                    #   plot(close)
+2. Ctrl+S without editing the title # → new slot literally named "My script" appears in cloud
+```
+
+**The fix is simple but easy to forget**: edit the `indicator("...")` title argument BEFORE the first save. The title becomes the slot name.
+
+```
+1. Click Create new → Indicator
+2. pine_set_source(source=<your code with indicator("YourDesiredName") on line 2>,
+                   allow_unverified=true)              # buffer is blank, nothing to lose
+3. pine_save                                            # → slot now called "YourDesiredName"
+4. pine_list_scripts                                    # → confirms slot v1.0 exists with that name
+```
+
+**Why this matters**: silent auto-naming + no dialog = if you assume "Ctrl+S will ask me for a name" you'll silently pollute the cloud with "My script", "Untitled-1", etc. After 5 such mistakes you have 5 anonymous slots and no idea which is which.
+
+**When the auto-derive does NOT apply**:
+- Subsequent saves of an already-named slot — Ctrl+S overwrites in place, no rename
+- "Save As" via dropdown menu — opens a real name dialog
+- Rename via dropdown → "Rename..." — explicit dialog, also independent of source code
+
+**Related tool gap**: `pine_save` MCP tool returns `action: "saved_with_dialog"` even when no dialog appeared. The detection heuristic is unreliable. Always verify via `pine_list_scripts` (look for new slot + version 1.0) instead of trusting the return value.
+
+See `docs/PINE_EDITOR_WORKFLOW.md` Recipe B for the full safe "create new Indicator" procedure.
+
+---
+
 ## 16. Always verify the active Pine-editor slot BEFORE calling `pine_set_source` (RSI-pane incident rule)
 
 **Problem** (incident 2026-04-23): `pine_set_source` writes to whatever Monaco editor is currently active. If the editor is on slot "RSI pane" and you call `pine_set_source(source=my_new_code)`, you get the new code in the "RSI pane" slot — one `pine_smart_compile` / `Ctrl+S` later, your RSI pane is gone.
