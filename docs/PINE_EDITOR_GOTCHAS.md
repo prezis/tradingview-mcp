@@ -98,3 +98,90 @@ chart.removeAllDrawingTools();
 ## 10. Always screenshot before AND after Pine editor operations
 
 Not optional. The editor state is invisible to MCP tools — only screenshots tell you what's actually happening. A 2-second screenshot saves 20 minutes of debugging the wrong script.
+
+---
+
+## CDP-level pitfalls (raw automation, below the MCP layer)
+
+> Items 11–15 migrated 2026-04-23 from the now-deleted `prezis/tradingview-claude-code` repo (1-commit prose tutorial; superseded by this server). They cover failure modes you only hit if you're driving CDP directly (e.g. `tv_cdp.py`-style standalone scripts) — but they explain *why* this MCP server avoids those approaches in `src/core/pine.js` + `src/core/pine-deploy.js`.
+
+## 11. `document.execCommand('insertText')` — text lands on the chart, not in Monaco
+
+**What happens**: You call `execCommand('insertText', false, code)` after focusing `.monaco-editor textarea` and the text appears as a persistent **annotation on the chart surface**, not inside the Pine editor.
+
+**Reproduction (via CDP `Runtime.evaluate`)**:
+```javascript
+var ta = document.querySelector('.monaco-editor textarea');
+ta.focus();
+document.execCommand('insertText', false, 'indicator("test")');
+// Result: "indicator("test")" appears as text ON the chart
+```
+
+**Why**: Monaco uses a hidden textarea as a keyboard proxy, but TV's chart canvas has higher z-index focus priority. `execCommand` targets the active element as the *browser* sees it — that's the chart, not the textarea.
+
+**Cleanup**: `draw_clear` (this MCP server) or manually delete the text annotation. **Avoid the technique entirely** — use `pine_set_source` instead, which goes through React Fiber → Monaco `setValue()`.
+
+## 12. CDP keyboard events `Ctrl+V` open the symbol search dialog
+
+**What happens**: You simulate Ctrl+V hoping to paste Pine code. Instead, TV's global hotkey handler intercepts and opens the symbol search overlay.
+
+**Reproduction (CDP)**:
+```python
+await cdp.send("Input.dispatchKeyEvent", {
+    "type": "keyDown", "key": "v", "modifiers": 2  # Ctrl
+})
+# Result: symbol search opens; no paste; Pine editor untouched.
+```
+
+**Why**: TV registers global keyboard handlers on the chart widget that fire *before* events reach Monaco. Ctrl+letter combos are application-level hotkeys.
+
+**Workaround**: Don't simulate Ctrl+V. Use React Fiber → `editor.setValue()` (the path `pine_set_source` already takes).
+
+## 13. `xdotool key ctrl+v` — same problem at the OS layer
+
+**What happens**: `xdotool key --window <TV> ctrl+v` sends to the focused window. TV's chart widget captures it before Monaco ever sees it. Same outcome as #12.
+
+**Reproduction**:
+```bash
+echo 'indicator("test")' | xclip -selection clipboard
+xdotool key --window $(xdotool search --name TradingView) ctrl+v
+# Result: symbol search opens
+```
+
+**Why**: Identical mechanism to #12 — the global handler fires regardless of whether the keystroke originated from CDP or X11.
+
+## 14. Headless browser + Desktop = single-active-session conflict
+
+**What happens**: You spin up Playwright/Puppeteer pointing at `tradingview.com/chart/` while the Desktop app is logged in. One of them gets logged out — usually with a "session expired" toast or a forced redirect to the login wall.
+
+**Reproduction**:
+```python
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True)
+    page = browser.new_page()
+    page.goto("https://www.tradingview.com/chart/")
+# Result: Desktop shows "session expired" OR headless gets login wall
+```
+
+**Why**: TradingView enforces **one active authenticated session per account**. The newer connection invalidates the older. This is an account-policy constraint, not a CDP/Electron quirk — so it isn't something you can patch around in code.
+
+**Workaround**: Drive CDP on the running Desktop app (which is exactly the architecture this MCP server uses). Never open a second authenticated TV session in parallel.
+
+## 15. Escape Pine code with `json.dumps()`, never with template literals
+
+**What happens**: You build a JS injection string for `Runtime.evaluate` using template literals (backticks). Pine code containing `${...}`, backticks, or backslashes silently breaks the JS literal — sometimes producing a syntax error in the *injected* code, sometimes producing wrong code that compiles to a different indicator.
+
+**Bad**:
+```python
+js = f"editor.setValue(`{pine_code}`)"   # template literal — breaks on ${}, `, \\
+```
+
+**Good**:
+```python
+import json
+escaped = json.dumps(pine_code)          # JSON-safe: handles all escapes
+js = f"editor.setValue({escaped})"
+```
+
+**Why**: `json.dumps()` produces a valid JS string literal for any input (the JSON string grammar is a strict subset of JS string grammar). Template literals interpret `${}` as interpolation and require manual escaping of three characters that *will* appear in real Pine code. This MCP server already uses `JSON.stringify(source)` everywhere in `src/core/pine.js` for the same reason — these notes are for anyone writing CDP code outside this repo.
