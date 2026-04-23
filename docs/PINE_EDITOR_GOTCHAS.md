@@ -168,6 +168,51 @@ with sync_playwright() as p:
 
 **Workaround**: Drive CDP on the running Desktop app (which is exactly the architecture this MCP server uses). Never open a second authenticated TV session in parallel.
 
+## 16. Always verify the active Pine-editor slot BEFORE calling `pine_set_source` (RSI-pane incident rule)
+
+**Problem** (incident 2026-04-23): `pine_set_source` writes to whatever Monaco editor is currently active. If the editor is on slot "RSI pane" and you call `pine_set_source(source=my_new_code)`, you get the new code in the "RSI pane" slot — one `pine_smart_compile` / `Ctrl+S` later, your RSI pane is gone.
+
+**Guard shipped**: as of 2026-04-23, `pine_set_source` refuses to run by default unless you pass EITHER:
+
+- `expected_script_name="<slot>"` — throws if the live `nameButton` shows something else
+- `allow_unverified=true` — explicit opt-out (use only right after `pine_new`, when the editor is known-blank)
+
+**The correct pre-write dance**:
+
+```
+# 1. Read the current active slot
+pine_get_active_slot()                        # -> "Popanaczi v6"
+
+# 2. If that's not where you want to write, switch
+pine_switch_script(name="My New Indicator")   # -> {current: "My New Indicator"}
+
+# 3. Now write, passing expected_script_name as a belt-and-braces assertion
+pine_set_source(
+    source=code,
+    expected_script_name="My New Indicator",
+)
+```
+
+**When creating a brand-new indicator slot**: don't `pine_new` + `pine_set_source` against an existing slot. Instead:
+
+```
+# 1. Write draft code into a temporary new buffer
+pine_new(type="indicator")
+pine_set_source(source=draft_code, allow_unverified=True)  # buffer is blank
+
+# 2. Save it under a real name (new tool, 2026-04-23)
+pine_save_as(name="My Smart Money FVG Overlay")
+
+# 3. Now the slot exists; future edits use the guarded path
+pine_set_source(source=updated_code, expected_script_name="My Smart Money FVG Overlay")
+```
+
+**Also guarded**: `pine_open`. It too used to silently inject into the active editor. From 2026-04-23 it refuses to run unless `confirm_overwrite_active_editor=true` is passed explicitly — and the error suggests `pine_switch_script` instead (which is what 99% of callers actually want when they think "open script X").
+
+**Why this matters**: a single wrong `pine_set_source` + `pine_smart_compile` destroys your saved Pine without any undo inside our tooling. TV's web UI has version history (Pro+), but there's no CDP API for it, so restoring is a manual right-click-on-script-name operation. Prevention beats recovery.
+
+---
+
 ## 15. Escape Pine code with `json.dumps()`, never with template literals
 
 **What happens**: You build a JS injection string for `Runtime.evaluate` using template literals (backticks). Pine code containing `${...}`, backticks, or backslashes silently breaks the JS literal — sometimes producing a syntax error in the *injected* code, sometimes producing wrong code that compiles to a different indicator.

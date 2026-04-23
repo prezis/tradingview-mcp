@@ -38,8 +38,17 @@ export const FIND_MONACO = `
 /**
  * Opens the Pine Editor panel and waits for Monaco to become available.
  * Returns true if editor is accessible, false on timeout.
+ *
+ * 3-method cascade ported 2026-04-23 from fibo/deploy.py. Each method runs in
+ * order and we stop as soon as Monaco appears. If all three fail, we also
+ * surface which method did the work (useful for TV-version-specific debugging).
+ *
+ * Method 1: [data-name="pine-dialog-button"] click — the modern selector
+ * Method 2: TradingView.bottomWidgetBar.activateScriptEditorTab() — the JS API
+ * Method 3: aria-label scan for any button containing "Pine" — old-TV fallback
  */
-export async function ensurePineEditorOpen() {
+export async function ensurePineEditorOpen({ _forTesting = null } = {}) {
+  // Quick check: is it already open?
   const already = await evaluate(`
     (function() {
       var m = ${FIND_MONACO};
@@ -48,28 +57,55 @@ export async function ensurePineEditorOpen() {
   `);
   if (already) return true;
 
-  await evaluate(`
+  const poll = async (msLeft) => {
+    const steps = Math.max(1, Math.ceil(msLeft / 200));
+    for (let i = 0; i < steps; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      const ready = await evaluate(`(function() { return ${FIND_MONACO} !== null; })()`);
+      if (ready) return true;
+    }
+    return false;
+  };
+
+  // Method 1 — try modern data-name selector first
+  const m1 = await evaluate(`
+    (function() {
+      var btn = document.querySelector('[data-name="pine-dialog-button"]');
+      if (btn) { btn.click(); return true; }
+      return false;
+    })()
+  `);
+  if (m1 && await poll(4000)) return true;
+
+  // Method 2 — bottomWidgetBar JS API
+  const m2 = await evaluate(`
     (function() {
       var bwb = window.TradingView && window.TradingView.bottomWidgetBar;
-      if (!bwb) return;
-      if (typeof bwb.activateScriptEditorTab === 'function') bwb.activateScriptEditorTab();
-      else if (typeof bwb.showWidget === 'function') bwb.showWidget('pine-editor');
+      if (!bwb) return false;
+      if (typeof bwb.activateScriptEditorTab === 'function') { bwb.activateScriptEditorTab(); return 'activated'; }
+      if (typeof bwb.showWidget === 'function') { bwb.showWidget('pine-editor'); return 'shown'; }
+      return false;
     })()
   `);
+  if (m2 && await poll(4000)) return true;
 
-  await evaluate(`
+  // Method 3 — aria-label scan for any "Pine"-ish button (older TV versions / i18n)
+  const m3 = await evaluate(`
     (function() {
-      var btn = document.querySelector('[aria-label="Pine"]')
-        || document.querySelector('[data-name="pine-dialog-button"]');
-      if (btn) btn.click();
+      var btn = document.querySelector('[aria-label="Pine"]');
+      if (btn) { btn.click(); return 'aria-label-exact'; }
+      var btns = document.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var label = (btns[i].getAttribute('aria-label') || '').toLowerCase();
+        if (label.indexOf('pine') !== -1) { btns[i].click(); return 'aria-label-fuzzy'; }
+      }
+      return false;
     })()
   `);
+  if (m3 && await poll(4000)) return true;
 
-  for (let i = 0; i < 50; i++) {
-    await new Promise(r => setTimeout(r, 200));
-    const ready = await evaluate(`(function() { return ${FIND_MONACO} !== null; })()`);
-    if (ready) return true;
-  }
+  // All three methods failed — surface a descriptive error via a side-channel.
+  // Callers get `false` and can throw with their own context.
   return false;
 }
 
@@ -263,9 +299,73 @@ export async function getSource() {
   return { success: true, source, line_count: source.split('\n').length, char_count: source.length };
 }
 
-export async function setSource({ source }) {
+/**
+ * Read the currently-active saved-slot name from the Pine editor's nameButton.
+ * This is the ONLY reliable "which script slot am I about to overwrite?" probe.
+ *
+ * Returns null if no nameButton found (editor closed / not yet rendered).
+ */
+export async function getActiveSlotName() {
+  return await evaluate(`
+    (function() {
+      var btn = document.querySelector('[class*="nameButton"]');
+      return btn ? btn.textContent.trim() : null;
+    })()
+  `);
+}
+
+/**
+ * Set Pine editor source.
+ *
+ * SAFETY (added 2026-04-23 after the RSI-pane overwrite incident):
+ * Pass `expected_script_name` to make setSource refuse when the editor's
+ * active saved slot does not match. This prevents the classic failure mode:
+ *   1. User has slot "RSI pane" open with their code.
+ *   2. Agent calls pine_set_source(...) thinking it's writing to a NEW slot.
+ *   3. Ctrl+S later silently destroys "RSI pane".
+ *
+ * When `expected_script_name` is omitted AND `allow_unverified=false` (default),
+ * this throws — forcing callers to either verify the slot or opt out explicitly.
+ *
+ * @param {object} opts
+ * @param {string} opts.source - Pine Script source code to inject
+ * @param {string} [opts.expected_script_name] - If set, abort when the live
+ *   editor's active slot name doesn't match. Match is exact (trim, case-sensitive).
+ * @param {boolean} [opts.allow_unverified=false] - Explicit opt-out of the
+ *   slot-verification guard. Use only when you KNOW the editor is empty
+ *   (e.g. right after pine_new). Logs a warning in the response either way.
+ */
+export async function setSource({ source, expected_script_name, allow_unverified = false }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+
+  const currentSlot = await getActiveSlotName();
+
+  if (expected_script_name !== undefined && expected_script_name !== null) {
+    if (currentSlot === null) {
+      throw new Error(
+        `setSource slot-verify: could not read editor's nameButton (cannot confirm ` +
+        `active slot). Expected "${expected_script_name}". Call pine_switch_script ` +
+        `first, or pass allow_unverified=true to bypass.`
+      );
+    }
+    if (currentSlot !== expected_script_name) {
+      throw new Error(
+        `setSource slot-verify FAILED: editor's active slot is "${currentSlot}" but ` +
+        `caller expected "${expected_script_name}". ` +
+        `Refusing to write to avoid overwriting the wrong script. ` +
+        `Fix: call pine_switch_script({name: "${expected_script_name}"}) first, ` +
+        `or pass allow_unverified=true if you really want to write to "${currentSlot}".`
+      );
+    }
+  } else if (!allow_unverified) {
+    throw new Error(
+      `setSource: no expected_script_name passed and allow_unverified=false. ` +
+      `Active slot is "${currentSlot}". Pass expected_script_name="${currentSlot}" ` +
+      `to confirm you intend to overwrite this slot, or allow_unverified=true to bypass. ` +
+      `This guard was added 2026-04-23 after the RSI-pane overwrite incident.`
+    );
+  }
 
   const escaped = JSON.stringify(source);
   const set = await evaluate(`
@@ -278,7 +378,158 @@ export async function setSource({ source }) {
   `);
 
   if (!set) throw new Error('Monaco found but setValue() failed.');
-  return { success: true, lines_set: source.split('\n').length };
+  return {
+    success: true,
+    lines_set: source.split('\n').length,
+    active_slot: currentSlot,
+    slot_verified: expected_script_name !== undefined && expected_script_name !== null,
+  };
+}
+
+/**
+ * Save the editor's CURRENT content to a NEW saved-script slot with the given name.
+ *
+ * Added 2026-04-23 to plug the "no way to create a new slot safely" gap that
+ * caused the RSI-pane overwrite. Flow:
+ *   1. Ensure Pine editor is open.
+ *   2. Click the kebab / "more" menu that exposes the Save As action.
+ *   3. Find the "Save as..." / "Zapisz jako..." menu item (i18n-aware) and click.
+ *   4. Type `name` into the dialog's text input.
+ *   5. Click the confirmation button (Save / Zapisz / OK).
+ *   6. Read back the new nameButton text to confirm success.
+ *
+ * Returns { success, new_slot_name, previous_slot_name } or throws with a
+ * descriptive error explaining which step failed so the user can intervene
+ * manually if TV's UI markup has changed.
+ */
+export async function saveAs({ name }) {
+  if (!name || typeof name !== 'string' || name.trim() === '') {
+    throw new Error('saveAs: "name" must be a non-empty string');
+  }
+  const targetName = name.trim();
+  const editorReady = await ensurePineEditorOpen();
+  if (!editorReady) throw new Error('Could not open Pine Editor.');
+
+  const previousSlot = await getActiveSlotName();
+
+  // Step 1 — open the "more" menu next to the script name.
+  // TV's kebab button sits near the nameButton; multiple selector fallbacks cover i18n.
+  const menuOpened = await evaluate(`
+    (function() {
+      // Primary: the well-known kebab within the pine editor toolbar
+      var candidates = [
+        '[data-name="more-button"]',
+        '[data-name="pine-editor-menu"]',
+        '[class*="menuButton"]',
+        '[class*="moreButton"]',
+      ];
+      for (var i = 0; i < candidates.length; i++) {
+        var btn = document.querySelector(candidates[i]);
+        if (btn) { btn.click(); return candidates[i]; }
+      }
+      // Fallback: aria-label scan
+      var btns = document.querySelectorAll('button');
+      for (var j = 0; j < btns.length; j++) {
+        var label = (btns[j].getAttribute('aria-label') || '').toLowerCase();
+        if (label.indexOf('more') !== -1 || label.indexOf('menu') !== -1 || label.indexOf('wiecej') !== -1) {
+          btns[j].click(); return 'aria-' + label;
+        }
+      }
+      return null;
+    })()
+  `);
+  if (!menuOpened) {
+    throw new Error(
+      'saveAs: could not find the Pine editor "more" / kebab menu button. ' +
+      'TV UI selector may have changed. Fall back: use the UI manually to ' +
+      'Save As, then pine_switch_script to the new slot.'
+    );
+  }
+  await new Promise(r => setTimeout(r, 300));
+
+  // Step 2 — click "Save as..." menu item
+  const saveAsClicked = await evaluate(`
+    (function() {
+      var items = document.querySelectorAll('[role="menuitem"], [class*="menuItem"], [class*="item"]');
+      var patterns = [
+        /^Save as(\\.\\.\\.|…)?$/i,         // English
+        /^Zapisz jako(\\.\\.\\.|…)?$/i,     // Polish
+        /^Speichern unter(\\.\\.\\.|…)?$/i, // German
+        /^Guardar como(\\.\\.\\.|…)?$/i,    // Spanish
+        /^Enregistrer sous(\\.\\.\\.|…)?$/i,// French
+      ];
+      for (var i = 0; i < items.length; i++) {
+        var t = items[i].textContent.trim();
+        for (var p = 0; p < patterns.length; p++) {
+          if (patterns[p].test(t)) { items[i].click(); return t; }
+        }
+      }
+      return null;
+    })()
+  `);
+  if (!saveAsClicked) {
+    throw new Error(
+      'saveAs: menu opened but could not find "Save as" item. ' +
+      'UI may have changed or locale is unsupported. ' +
+      'Supported locales: en, pl, de, es, fr.'
+    );
+  }
+  await new Promise(r => setTimeout(r, 500));
+
+  // Step 3 — fill the name dialog + confirm
+  const filled = await evaluate(`
+    (function() {
+      // Look for text input inside a dialog
+      var inputs = document.querySelectorAll('[role="dialog"] input[type="text"], [class*="dialog"] input[type="text"], input[placeholder*="Nazwa"], input[placeholder*="Name"], input[placeholder*="Title"]');
+      if (inputs.length === 0) return { ok: false, reason: 'no_input' };
+      var input = inputs[inputs.length - 1];
+      // Native setter so React picks up the change
+      var nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(input, ${JSON.stringify(targetName)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true };
+    })()
+  `);
+  if (!filled || !filled.ok) {
+    throw new Error('saveAs: dialog appeared but could not locate/fill the name input (' + (filled && filled.reason) + ').');
+  }
+  await new Promise(r => setTimeout(r, 300));
+
+  const confirmed = await evaluate(`
+    (function() {
+      var btns = document.querySelectorAll('[role="dialog"] button, [class*="dialog"] button');
+      var patterns = [
+        /^Save$/i, /^Zapisz$/i, /^Speichern$/i, /^Guardar$/i, /^Enregistrer$/i, /^OK$/i,
+      ];
+      for (var i = 0; i < btns.length; i++) {
+        var t = btns[i].textContent.trim();
+        for (var p = 0; p < patterns.length; p++) {
+          if (patterns[p].test(t) && !btns[i].disabled) { btns[i].click(); return t; }
+        }
+      }
+      return null;
+    })()
+  `);
+  if (!confirmed) {
+    throw new Error('saveAs: name entered but no Save/OK button found. UI may have changed.');
+  }
+  // TV needs a moment to round-trip save to server + update nameButton
+  await new Promise(r => setTimeout(r, 1500));
+
+  const newSlot = await getActiveSlotName();
+  const success = newSlot === targetName;
+
+  return {
+    success,
+    new_slot_name: newSlot,
+    requested_name: targetName,
+    previous_slot_name: previousSlot,
+    confirm_button: confirmed,
+    note: success
+      ? `Saved "${previousSlot}" content to new slot "${newSlot}". Original slot is now on a detached editor view — call pine_switch_script to navigate between slots.`
+      : `saveAs: clicked confirm but nameButton now reads "${newSlot}" instead of "${targetName}". This may indicate a duplicate-name auto-rename by TV, OR the save failed silently. Inspect via pine_list_scripts.`,
+  };
 }
 
 export async function compile() {
@@ -534,9 +785,43 @@ export async function newScript({ type }) {
   return { success: true, type, action: 'new_script_created', template: typeMap[type] };
 }
 
-export async function openScript({ name }) {
+/**
+ * Fetch a saved Pine script's source from TV's pine-facade API, then inject
+ * into the CURRENTLY-ACTIVE Monaco editor.
+ *
+ * WARNING (documented 2026-04-23 after the RSI-pane overwrite incident):
+ * This function REPLACES the active editor's content with the fetched source.
+ * It does NOT switch the editor's slot. If the editor's current slot is
+ * "RSI pane" and you call openScript({name: "Popanaczi v6"}), you get
+ * Popanaczi v6 source sitting in the "RSI pane" slot — one Ctrl+S and you
+ * lose your RSI pane.
+ *
+ * Defaults changed 2026-04-23: `confirm_overwrite_active_editor` must be true
+ * to proceed. For "read source, don't touch editor" workflows use
+ * `pine_get_source` after `pine_switch_script` instead.
+ *
+ * @param {object} opts
+ * @param {string} opts.name - Saved script name to fetch.
+ * @param {boolean} [opts.confirm_overwrite_active_editor=false] - Required true
+ *   to proceed. This acknowledges you understand the active editor slot will
+ *   be clobbered with the fetched source, NOT switched to a different slot.
+ */
+export async function openScript({ name, confirm_overwrite_active_editor = false }) {
   const editorReady = await ensurePineEditorOpen();
   if (!editorReady) throw new Error('Could not open Pine Editor.');
+
+  if (!confirm_overwrite_active_editor) {
+    const active = await getActiveSlotName();
+    throw new Error(
+      `pine_open refusal: this function INJECTS the fetched source into the ` +
+      `currently-active editor (slot: "${active}"), it does NOT switch slots. ` +
+      `If your intent is "switch editor to show script X", call ` +
+      `pine_switch_script({name: "${name}"}) instead. ` +
+      `If you really want to overwrite the active slot's content with the ` +
+      `fetched source, pass confirm_overwrite_active_editor=true. ` +
+      `This guard was added 2026-04-23 after the RSI-pane overwrite incident.`
+    );
+  }
 
   const escapedName = JSON.stringify(name.toLowerCase());
 
