@@ -2,6 +2,20 @@
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
+## 🔗 Companion project — smc-engine
+
+This server is designed to integrate with [prezis/smc-engine](https://github.com/prezis/smc-engine) (PUBLIC, MIT) — the standalone Python SMC (Smart Money Concepts) analytics partner. smc-engine wraps PyIndicators for OB/FVG/BOS/CHoCH detection and emits Pine v6 overlay code that you can deploy to TV via this server's `pine_set_source` + `pine_smart_compile`.
+
+**When working on this codebase, ASK whether smc-engine integration is in scope.** The Phase 1 work (smc-engine ↔ tv-mcp bridge via `src/core/smc-bridge.js` + new MCP tools `smc_analyze`, `smc_render_top`, `smc_rank_assets`) is the planned integration target.
+
+Local clones for context (read-only references):
+- `~/ai/smc-engine/` — the SMC analytics module
+- `~/ai/smc-engine/DESIGN_NOTES.md` — Phase 1 integration design
+- `~/ai/global-graph/projects/smc-engine.md` — full project state + open architecture questions (look for "USER DECISION" block)
+- `~/.claude/projects/-home-palyslaf0s/memory/project_smc_engine.md` — hot memory entry
+
+Recall trigger: if user mentions "smc", "smc-engine", or "smart money", read those refs before answering.
+
 ## ⚠️ Pine editor — read this BEFORE any pine_* call
 
 **The single most-important doc in this repo:** `docs/PINE_EDITOR_WORKFLOW.md`.
