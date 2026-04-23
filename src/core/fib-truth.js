@@ -71,13 +71,30 @@ export async function getAllIndicatorValues() {
 }
 
 /**
- * Set Fib values on Popanaczi indicator (Manual mode).
- * Takes approximate screen values, looks up exact OHLCV wicks, sets them.
+ * Set exact Fib values on a custom Fibonacci-style indicator (Manual mode).
+ * Takes approximate screen values, looks up exact OHLCV wicks, sets them on
+ * the matching study.
  *
- * @param {{ approx_high: number, approx_low: number, study_id?: string }}
+ * Assumes the target indicator has Manual-mode inputs:
+ *   - in_0: mode string ("Manual")
+ *   - in_1: high price (float)
+ *   - in_2: low price (float)
+ *
+ * @param {object} opts
+ * @param {number} opts.approx_high - approximate high price (for logging only)
+ * @param {number} opts.approx_low - approximate low price (for logging only)
+ * @param {string} [opts.study_id] - explicit study ID (skips auto-detection)
+ * @param {string[]} [opts.study_name_includes] - all-of substrings to match
+ *   the study name when study_id is not provided. Default: ["Fib"]. Customize
+ *   to your indicator naming convention (e.g. ["MyTeam", "Fibo"]).
  * @returns {{ exact_high, exact_low, high_time, low_time }}
  */
-export async function setExactFib({ approx_high, approx_low, study_id }) {
+export async function setExactFib({
+  approx_high,
+  approx_low,
+  study_id,
+  study_name_includes = ['Fib'],
+} = {}) {
   // 1. Get exact wicks from OHLCV
   const wicks = await getExactWicks();
 
@@ -86,19 +103,28 @@ export async function setExactFib({ approx_high, approx_low, study_id }) {
   const exact_high = wicks.wick_high;
   const exact_low = wicks.wick_low;
 
-  // 3. Set on indicator
+  // 3. Find target study (auto-detect via name substring(s) if no ID given)
+  const matchersJson = JSON.stringify(study_name_includes);
   const sid = study_id || await evaluate(`
     (function(){
       var chart = window.TradingViewApi._activeChartWidgetWV.value();
       var studies = chart.getAllStudies();
+      var matchers = ${matchersJson};
       for (var s of studies) {
-        if (s.name.includes('Popanaczi') && s.name.includes('Fibo')) return s.id;
+        var ok = true;
+        for (var m of matchers) { if (!s.name.includes(m)) { ok = false; break; } }
+        if (ok) return s.id;
       }
       return null;
     })()
   `);
 
-  if (!sid) throw new Error('Popanaczi Fibo study not found on chart');
+  if (!sid) {
+    throw new Error(
+      `No study found matching all of [${study_name_includes.join(', ')}]. ` +
+      `Pass a different study_name_includes array, or pass study_id directly.`
+    );
+  }
 
   await evaluate(`
     (function(){

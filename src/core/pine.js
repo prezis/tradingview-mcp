@@ -39,9 +39,9 @@ export const FIND_MONACO = `
  * Opens the Pine Editor panel and waits for Monaco to become available.
  * Returns true if editor is accessible, false on timeout.
  *
- * 3-method cascade ported 2026-04-23 from fibo/deploy.py. Each method runs in
- * order and we stop as soon as Monaco appears. If all three fail, we also
- * surface which method did the work (useful for TV-version-specific debugging).
+ * 3-method cascade for opening the Pine editor — each method runs in order
+ * and we stop as soon as Monaco appears. Surfaces which method did the work
+ * (useful for TV-version-specific debugging).
  *
  * Method 1: [data-name="pine-dialog-button"] click — the modern selector
  * Method 2: TradingView.bottomWidgetBar.activateScriptEditorTab() — the JS API
@@ -789,12 +789,12 @@ export async function newScript({ type }) {
  * Fetch a saved Pine script's source from TV's pine-facade API, then inject
  * into the CURRENTLY-ACTIVE Monaco editor.
  *
- * WARNING (documented 2026-04-23 after the RSI-pane overwrite incident):
+ * WARNING (documented 2026-04-23 after a real overwrite incident):
  * This function REPLACES the active editor's content with the fetched source.
  * It does NOT switch the editor's slot. If the editor's current slot is
- * "RSI pane" and you call openScript({name: "Popanaczi v6"}), you get
- * Popanaczi v6 source sitting in the "RSI pane" slot — one Ctrl+S and you
- * lose your RSI pane.
+ * "MyOscillator" and you call openScript({name: "MyOverlay"}), you get
+ * MyOverlay source sitting in the "MyOscillator" slot — one Ctrl+S and you
+ * lose your MyOscillator.
  *
  * Defaults changed 2026-04-23: `confirm_overwrite_active_editor` must be true
  * to proceed. For "read source, don't touch editor" workflows use

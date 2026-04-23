@@ -18,7 +18,7 @@ TV stores every Pine script you've saved as a **slot** in its cloud, identified 
 | **Indicator title** | The string passed to `indicator("...")` / `strategy("...")` / `library("...")` in the source | First non-comment line of source | Edit the source code |
 | **Editor buffer** | The Monaco text area that actually accepts your typing | `pine_get_source` returns this | `pine_set_source` writes to this |
 
-**Critical insight**: `pine_set_source` writes to **whatever slot is currently open in the editor**. It does NOT switch slots. If the editor is showing `RSI pane` and you call `pine_set_source(source=my_new_indicator_code)`, then `pine_save` (Ctrl+S), you have **destroyed the RSI pane slot**. There is no undo inside our tooling. TV's manual version history (Pro+ only, dropdown → "Version history...") is the only recovery path.
+**Critical insight**: `pine_set_source` writes to **whatever slot is currently open in the editor**. It does NOT switch slots. If the editor is showing `MyOscillator` and you call `pine_set_source(source=my_new_indicator_code)`, then `pine_save` (Ctrl+S), you have **destroyed the MyOscillator slot**. There is no undo inside our tooling. TV's manual version history (Pro+ only, dropdown → "Version history...") is the only recovery path.
 
 ---
 
@@ -39,7 +39,7 @@ mcp__tradingview__ui_evaluate({
 // Returns the active slot's name as displayed in TV. Examples:
 //   "RSI pane"          → existing saved slot
 //   "Untitled script"   → fresh blank buffer (not yet saved as a slot)
-//   "Popanaczi v6"      → existing saved slot
+//   "MyOverlay v2"      → existing saved slot
 
 // Probe 2 — full slot inventory (no editor side-effects)
 mcp__tradingview__pine_list_scripts()
@@ -59,7 +59,7 @@ If `nameButton` returns `Untitled script` → you're on an unsaved buffer. Anyth
 
 ```
 What am I trying to do?
-├─ Edit an EXISTING saved slot (e.g. update Popanaczi v6 with a tweak)
+├─ Edit an EXISTING saved slot (e.g. update MyOverlay with a tweak)
 │  └─ Recipe A: Edit existing slot
 │
 ├─ Create a NEW indicator slot from scratch (most common for new tools)
@@ -85,7 +85,7 @@ What am I trying to do?
 
 ## Recipe A — Edit an EXISTING saved slot
 
-**Use when**: you want to update Popanaczi v6 with a new feature, fix a bug in RSI pane, etc.
+**Use when**: you want to update MyOverlay with a new feature, fix a bug in MyOscillator, etc.
 
 **Precondition**: the slot already exists in `pine_list_scripts`.
 
@@ -106,7 +106,7 @@ What am I trying to do?
                                                         # other slots untouched
 ```
 
-**Why so paranoid?** Today (2026-04-23) we destroyed an RSI pane slot by skipping steps 1–3. A pre-existing fibo deploy.py session had left the editor on RSI pane; we ran `pine_set_source(SMC-overlay code)` thinking we were creating something new; `pine_smart_compile` saved over RSI pane. That entire incident is preventable with steps 1, 3, and 5's `expected_script_name` guard.
+**Why so paranoid?** A real overwrite incident on 2026-04-23 destroyed a saved indicator slot by skipping steps 1–3. A pre-existing automation session had left the editor on the wrong slot; the next `pine_set_source(...)` (intending to create something new) wrote into that slot; `pine_smart_compile` saved over it. That entire incident is preventable with steps 1, 3, and 5's `expected_script_name` guard.
 
 ---
 
@@ -286,7 +286,7 @@ If version history is unavailable (free account, history limit reached, etc.):
 - Check `~/ai/.archive/` tarballs from per-task auto-commit hooks
 - Check tmux scrollback / Claude Code transcripts in `~/.claude/projects/-home-palyslaf0s/*.jsonl` for `pine_get_source` results from earlier sessions
 
-The grep-the-Fibo-repo path saved us today — `~/ai/fibo/pine/popanaczi-oscillator.pine` had the canonical RSI-pane source preserved in git history despite the cloud copy being trashed.
+The grep-your-private-pine-repo path is what saved us — the canonical source for the lost slot was preserved in a separate private git repo, despite the cloud copy being trashed. **Lesson: keep your Pine sources mirrored to git outside TV.**
 
 ---
 
@@ -319,6 +319,6 @@ After today's RSI pane incident, tv-mcp gained these guards (commit `fbe4b22`):
 - `pine_set_source(allow_unverified=true)` — explicit opt-out for fresh Untitled buffers
 - `pine_open(confirm_overwrite_active_editor=true)` — required flag, error message redirects to `pine_switch_script` for "open script X" intent
 - `pine_save_as(name)` — drives kebab → Save As dialog (i18n: en/pl/de/es/fr) — needed for renaming or for explicit-name saves where indicator() title is different from desired slot name
-- `ensurePineEditorOpen` — 3-method cascade ported from `~/ai/fibo/deploy.py`
+- `ensurePineEditorOpen` — 3-method cascade for opening the Pine editor reliably across TV versions
 
 These tools are exposed only if your tv-mcp MCP server has been restarted to pick up commit `fbe4b22`. Old sessions still using cached tool schemas will fall back to the unguarded behaviour — fall back to `ui_evaluate` probes instead.

@@ -73,7 +73,7 @@ chart.removeAllDrawingTools();
 
 ## 7. Script names in TV ≠ indicator titles in Pine code
 
-**Problem**: The saved script name in "My Scripts" may differ from the `indicator("Title")` in Pine code. E.g., script saved as "Popanaczi Fibo v5" but code says `indicator("Popanaczi Fibo v6")`.
+**Problem**: The saved script name in "My Scripts" may differ from the `indicator("Title")` in Pine code. E.g., script saved as "MyFib v5" but code says `indicator("MyFib v6")`.
 
 **Impact**: `pine_open` matches by saved name. `chart_get_state` shows the indicator title from code. `switchScript` searches dropdown by saved name.
 
@@ -219,7 +219,7 @@ See `docs/PINE_EDITOR_WORKFLOW.md` Recipe B for the full safe "create new Indica
 
 ```
 # 1. Read the current active slot
-pine_get_active_slot()                        # -> "Popanaczi v6"
+pine_get_active_slot()                        # -> "MyOverlay v2"
 
 # 2. If that's not where you want to write, switch
 pine_switch_script(name="My New Indicator")   # -> {current: "My New Indicator"}
