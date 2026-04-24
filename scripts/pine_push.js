@@ -40,8 +40,18 @@ await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', co
 await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
 console.log('Ctrl+Enter sent (Add to chart shortcut)');
 
+// Wait briefly then handle the "Cannot add a script with unsaved changes" confirmation dialog if present.
+// (Fix 2026-04-24: TV pops a dialog asking to save before adding when source differs from saved slot.
+// Without clicking "Save and add to chart" the chart never updates → vision sees stale state → false-positive.)
+await new Promise(r => setTimeout(r, 800));
+const dialogClicked = (await c.Runtime.evaluate({
+  expression: '(function(){var btns=document.querySelectorAll("button");for(var i=0;i<btns.length;i++){var b=btns[i];if(!b.offsetParent)continue;var t=(b.textContent||"").trim();if(/^save and add to chart$/i.test(t)||/^zapisz i dodaj/i.test(t)){b.click();return "dialog: "+t}}return null})()',
+  returnByValue: true,
+})).result?.value;
+if (dialogClicked) console.log('Dialog handled:', dialogClicked);
+
 // Wait then check errors
-await new Promise(r => setTimeout(r, 3000));
+await new Promise(r => setTimeout(r, 2200));
 const errors = (await c.Runtime.evaluate({
   expression: '(function(){var c=document.querySelector(".monaco-editor.pine-editor-monaco");if(!c)return[];var el=c;var fk;for(var i=0;i<20;i++){if(!el)break;fk=Object.keys(el).find(function(k){return k.startsWith("__reactFiber$")});if(fk)break;el=el.parentElement}if(!fk)return[];var cur=el[fk];for(var d=0;d<15;d++){if(!cur)break;if(cur.memoizedProps&&cur.memoizedProps.value&&cur.memoizedProps.value.monacoEnv){var env=cur.memoizedProps.value.monacoEnv;if(env.editor&&typeof env.editor.getEditors==="function"){var eds=env.editor.getEditors();if(eds.length>0){var model=eds[0].getModel();var markers=env.editor.getModelMarkers({resource:model.uri});return markers.map(function(m){return{line:m.startLineNumber,msg:m.message}})}}}cur=cur.return}return[]})()',
   returnByValue: true,
