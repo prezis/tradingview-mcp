@@ -22,9 +22,11 @@ const set = (await c.Runtime.evaluate({
 if (!set) { console.error('Could not inject into Pine editor'); await c.close(); process.exit(1); }
 console.log(`Pushed ${src.split('\n').length} lines → Pine editor`);
 
-// Click compile button
+// Click compile button — TV's "Add to chart" is an ICON-ONLY button with text in `title` attr,
+// not in textContent. Earlier regex on .textContent never matched. Now also check title attribute.
+// (Discovered 2026-04-24 via DOM inspection: button[title="Add to chart"] in Pine editor toolbar.)
 const clicked = (await c.Runtime.evaluate({
-  expression: '(function(){var btns=document.querySelectorAll("button");for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim();if(/save and add to chart/i.test(t)){btns[i].click();return t}if(/^(Add to chart|Update on chart)/i.test(t)){btns[i].click();return t}}for(var i=0;i<btns.length;i++){if(btns[i].className.indexOf("saveButton")!==-1&&btns[i].offsetParent!==null){btns[i].click();return "Pine Save"}}return null})()',
+  expression: '(function(){var btns=document.querySelectorAll("button");for(var i=0;i<btns.length;i++){var b=btns[i];if(!b.offsetParent)continue;var t=b.textContent.trim();var ti=(b.getAttribute("title")||"").trim();if(/save and add to chart/i.test(t)){b.click();return "btn:"+t}if(/^(Add to chart|Update on chart)/i.test(t)||/^(Add to chart|Update on chart)/i.test(ti)){b.click();return "btn:"+(t||ti)}}for(var i=0;i<btns.length;i++){if(btns[i].className.indexOf("saveButton")!==-1&&btns[i].offsetParent!==null){btns[i].click();return "Pine Save"}}return null})()',
   returnByValue: true,
 })).result?.value;
 
