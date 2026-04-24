@@ -301,7 +301,16 @@ export async function addBuiltinStudy({ name, params }) {
 
 /**
  * Remove an indicator/study by matching its title substring.
- * Searches all pane widgets → data sources for a title match.
+ *
+ * BUG FIX 2026-04-24: previous implementation walked dataSources() and called
+ * removeDataSource(), which silently failed in current TradingView builds —
+ * returned success+removedCount but chart_get_state immediately after still
+ * showed the same studies. Discovered while building pine_push.js auto-cleanup
+ * for the smc-engine indicator (max-5-instance error).
+ *
+ * Fix: use the same internal API that chart_manage_indicator uses successfully:
+ * chart.getAllStudies() returns [{id, name, ...}] and chart.removeEntity(id)
+ * actually removes. This is the canonical TradingView API path.
  *
  * @param {string} titleMatch  Substring to match against study title (case-insensitive)
  * @returns {{ success, removed, matched }}
@@ -311,32 +320,20 @@ export async function removeStudy({ titleMatch }) {
     (function() {
       var target = ${JSON.stringify(titleMatch.toLowerCase())};
       var chart = ${CHART_API};
-      var model = chart._chartWidget.model();
-      var sources = model.model().dataSources();
+      var studies = (typeof chart.getAllStudies === 'function') ? (chart.getAllStudies() || []) : [];
       var removed = [];
       var matched = [];
 
-      for (var i = 0; i < sources.length; i++) {
-        var src = sources[i];
-        var title = '';
-        try {
-          if (typeof src.title === 'function') title = src.title();
-          else if (src._metaInfo && src._metaInfo.description) title = src._metaInfo.description;
-          else if (src._metaInfo && src._metaInfo.shortDescription) title = src._metaInfo.shortDescription;
-        } catch(e) { continue; }
-
-        if (title.toLowerCase().indexOf(target) !== -1) {
-          matched.push(title);
+      for (var i = 0; i < studies.length; i++) {
+        var s = studies[i];
+        var name = (s && s.name) ? String(s.name).toLowerCase() : '';
+        if (name.indexOf(target) !== -1) {
+          matched.push(s.name);
           try {
-            model.model().removeDataSource(src);
-            removed.push(title);
-          } catch(e2) {
-            // Try via entity ID fallback
-            try {
-              var eid = src.entityId && src.entityId();
-              if (eid) chart.removeEntity(eid);
-              removed.push(title);
-            } catch(e3) {}
+            chart.removeEntity(s.id);
+            removed.push(s.name);
+          } catch(e) {
+            // Best-effort: keep the title in matched but not in removed if removeEntity throws
           }
         }
       }
