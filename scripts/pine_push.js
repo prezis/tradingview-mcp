@@ -3,8 +3,16 @@
 import CDP from 'chrome-remote-interface';
 import { readFileSync } from 'fs';
 
-const srcPath = new URL('../scripts/current.pine', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
+// Source: command-line arg #1 if given (absolute or relative path),
+// else fallback to scripts/current.pine for back-compat.
+// Bug fix 2026-04-24: previously argv was silently ignored — pushes always
+// went from current.pine even when caller passed a different file.
+const argPath = process.argv[2];
+const srcPath = argPath
+  ? (argPath.startsWith('/') ? argPath : new URL(`../${argPath}`, import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1'))
+  : new URL('../scripts/current.pine', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
 const src = readFileSync(srcPath, 'utf-8');
+console.log(`Source: ${srcPath} (${src.length} bytes)`);
 
 const targets = await (await fetch('http://localhost:9222/json/list')).json();
 const t = targets.find(t => t.url?.includes('tradingview.com'));
