@@ -78,9 +78,15 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 3. `pine_get_errors` → read compilation errors
 4. `pine_get_console` → read log.info() output
 5. `pine_get_source` → read current code back (WARNING: can be very large for complex scripts)
-6. `pine_save` → save to TradingView cloud
-7. `pine_new` → create blank indicator/strategy/library
-8. `pine_open` → load a saved script by name
+6. `pine_save` → save to TradingView cloud (Ctrl+S — saves source but does NOT refresh chart instance)
+7. **`ui_keyboard {key:"Enter", modifiers:["ctrl"]}` → Ctrl+Enter = "Add to chart" / "Update on chart"** (the canonical TV keyboard shortcut, only reliable automation path — toolbar button DOM is fragile). ALWAYS pair with pine_save to actually deploy code changes.
+8. `pine_new` → create blank indicator/strategy/library
+9. `pine_open` → load a saved script by name
+
+**Canonical deploy recipe** (verified 2026-04-24):
+```
+pine_get_active_slot → pine_set_source(expected_script_name=...) → pine_smart_compile → ui_keyboard{Ctrl+Enter} → chart_get_state (verify entity_id appeared)
+```
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode

@@ -20,6 +20,24 @@ TV stores every Pine script you've saved as a **slot** in its cloud, identified 
 
 **Critical insight**: `pine_set_source` writes to **whatever slot is currently open in the editor**. It does NOT switch slots. If the editor is showing `MyOscillator` and you call `pine_set_source(source=my_new_indicator_code)`, then `pine_save` (Ctrl+S), you have **destroyed the MyOscillator slot**. There is no undo inside our tooling. TV's manual version history (Pro+ only, dropdown → "Version history...") is the only recovery path.
 
+## TV Pine editor keyboard shortcuts (canonical, learned 2026-04-24)
+
+| Shortcut | Action | Why use over the toolbar button |
+|---|---|---|
+| **Ctrl+Enter** | **Add to chart / Update on chart** | The toolbar "Add to chart" button has fragile DOM selectors that don't match reliably from automation. **Ctrl+Enter is the only reliable automation path** — invoke via `ui_keyboard {key:"Enter", modifiers:["ctrl"]}`. Idempotent: if already on chart, TV treats as Update. |
+| Ctrl+S | Save current source to slot | Saves source but does NOT refresh chart instance — chart still runs the version that was added before the save. Pair with Ctrl+Enter to actually deploy. |
+
+**Recipe — Push Pine + apply to chart (combined save + add)**:
+```
+1. pine_get_active_slot                                    # confirm correct slot
+2. pine_set_source(source=..., expected_script_name="...") # write source
+3. pine_smart_compile                                      # find + click Save button
+4. ui_keyboard{key:"Enter", modifiers:["ctrl"]}            # ALWAYS — guarantees chart refresh
+5. chart_get_state                                         # verify new entity_id appeared
+```
+
+The `scripts/pine_push.js` helper now sends Ctrl+Enter unconditionally after the Save click for exactly this reason — see commit `41672b5+` if curious.
+
 ---
 
 ## The pre-flight check — ALWAYS run before any write

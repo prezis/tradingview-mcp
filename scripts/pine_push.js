@@ -29,10 +29,14 @@ const clicked = (await c.Runtime.evaluate({
 })).result?.value;
 
 console.log('Compile:', clicked || 'keyboard fallback');
-if (!clicked) {
-  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
-}
+// ALWAYS send Ctrl+Enter as well — this is TV's canonical "Add to chart" shortcut
+// (per user 2026-04-24). When source is identical to saved slot, button matcher
+// only finds "Pine Save" (saves source but doesn't refresh chart instance).
+// Ctrl+Enter is the only reliable way to trigger Add-to-chart from automation.
+// Safe to send: if indicator already on chart, TV treats it as Update (idempotent).
+await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+console.log('Ctrl+Enter sent (Add to chart shortcut)');
 
 // Wait then check errors
 await new Promise(r => setTimeout(r, 3000));
