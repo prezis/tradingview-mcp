@@ -340,3 +340,12 @@ After today's RSI pane incident, tv-mcp gained these guards (commit `fbe4b22`):
 - `ensurePineEditorOpen` — 3-method cascade for opening the Pine editor reliably across TV versions
 
 These tools are exposed only if your tv-mcp MCP server has been restarted to pick up commit `fbe4b22`. Old sessions still using cached tool schemas will fall back to the unguarded behaviour — fall back to `ui_evaluate` probes instead.
+
+---
+
+## See also — Pine ↔ Python porting
+
+When porting Pine indicators to Python (or auditing an existing port for parity):
+
+- `~/ai/smc-engine/pine/` — our in-house Pine v6 indicator source + `smc_engine/pine_emit.py` Pine-code generator
+- `~/ai/global-graph/references/lazytrader-pine-port-flux-charts.md` — reference port log: 398-line function-by-function mapping of Flux Charts "Market Structure Dashboard" Pine → Python (from `psyd3x/lazytrader`, MIT). Good template for mapping methodology; paths cited reference LazyTrader's internal modules, not ours.
