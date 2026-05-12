@@ -2,6 +2,56 @@
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
+## 🚨 LAUNCH GOTCHA — read FIRST if tv_health_check fails (Linux snap)
+
+**The `mcp__tradingview__tv_launch` tool invokes the inner binary `/snap/tradingview/current/tradingview` directly. On snap-packaged Linux installs this breaks two things:**
+
+1. **Auth state is NOT loaded** — the wrapper at `/snap/bin/tradingview` (which is a symlink to `/usr/bin/snap`) sets up the snap sandbox env (XDG_RUNTIME_DIR, sandbox cookies path, dbus paths). Inner-binary launch bypasses that → TV opens un-authenticated and shows the "Sign in with browser" dialog. The snap can't spawn the system browser → user stuck.
+2. **dbus version mismatch** — TV bundles `libdbus-1.so.3` with `LIBDBUS_PRIVATE_1.12.16` which is missing on newer hosts → TV crashes with "write EPIPE" on first console.debug if launched detached.
+
+### CORRECT launch sequence (Linux snap)
+
+When `tv_launch` fails to reach an authenticated state, OR when CDP port 9222 isn't open, use this instead:
+
+```bash
+# 1. Kill any zombie TV processes (no sudo needed — user's own session)
+pkill -9 -f "snap/tradingview" 2>/dev/null
+sleep 2
+
+# 2. Launch via the SNAP WRAPPER (NOT inner binary) with CDP flag,
+#    inside a tmux pane so it inherits the user shell env and doesn't die
+#    when the launching process exits.
+tmux new-window -t sol: -n tv-launcher
+tmux send-keys -t sol:tv-launcher "/snap/bin/tradingview --remote-debugging-port=9222" Enter
+# Wait ~6s for TV to open + CDP port to bind.
+
+# 3. Verify:
+curl -s --max-time 3 http://localhost:9222/json/version
+# Should return JSON with browser version. If not, TV didn't bind CDP yet — wait more.
+
+# 4. Now MCP can attach:
+mcp__tradingview__tv_health_check
+```
+
+**Why the snap wrapper, not inner binary:** `/snap/bin/tradingview` → `/usr/bin/snap` performs `snap run tradingview` which sets all the snap-sandbox env vars + invokes the inner binary with proper isolation. Without that, auth cookies in `~/snap/tradingview/current/.config/TradingView/` are unreadable.
+
+**Why tmux, not nohup:** when a Bash sub-shell exits, child processes inherit the closed stdout/stderr pipes. TV's first `console.debug` then triggers `write EPIPE` → crash. tmux gives TV a real tty that persists.
+
+### Permanent fix — desktop file override (2026-05-12)
+
+User-level override at `~/.local/share/applications/tradingview_tradingview.desktop` makes the normal app-icon click always include the CDP flag:
+
+```
+Exec=/snap/bin/tradingview --remote-debugging-port=9222 %U
+```
+
+After write: `update-desktop-database ~/.local/share/applications/` to refresh. The override beats the system-wide snap-installed desktop file at `/var/lib/snapd/desktop/applications/tradingview_tradingview.desktop`. Survives snap updates.
+
+### Don't use this if
+
+- macOS / Windows — different launch paths, `tv_launch` works there.
+- User already has TV running and authenticated — just call `tv_health_check`. If port 9222 isn't bound, you still need to relaunch via the snap wrapper.
+
 ## 🔗 Companion project — smc-engine
 
 This server is designed to integrate with [prezis/smc-engine](https://github.com/prezis/smc-engine) (PUBLIC, MIT) — the standalone Python SMC (Smart Money Concepts) analytics partner. smc-engine wraps PyIndicators for OB/FVG/BOS/CHoCH detection and emits Pine v6 overlay code that you can deploy to TV via this server's `pine_set_source` + `pine_smart_compile`.
