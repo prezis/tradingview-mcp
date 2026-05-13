@@ -136,7 +136,46 @@ export async function deployScript({ pinePath }) {
     await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
   }
 
-  await new Promise(r => setTimeout(r, 2500));
+  await new Promise(r => setTimeout(r, 1500));
+
+  // Step 6b — handle "Cannot add a script with unsaved changes" confirmation
+  // dialog. TV pops this when the save in step 4 didn't fully commit before
+  // "Add to chart" was clicked. Button text: "Save and add to chart" (EN)
+  // or "Zapisz i dodaj do wykresu" (PL). Without this handler the deploy
+  // returns success:true but the chart is NEVER actually updated — fix
+  // surfaced from smc-eryk wick-update session 2026-05-13.
+  const unsavedDialogHandled = await evaluate(`
+    (function() {
+      var dialogs = document.querySelectorAll('[role="dialog"], [class*="dialog"], [class*="modal"]');
+      for (var d = 0; d < dialogs.length; d++) {
+        var dialog = dialogs[d];
+        if (dialog.offsetParent === null) continue;  // hidden
+        var btns = dialog.querySelectorAll('button');
+        for (var i = 0; i < btns.length; i++) {
+          var text = btns[i].textContent.trim();
+          // EN: "Save and add to chart"  PL: "Zapisz i dodaj do wykresu"
+          // Also be lenient — match any button containing both "save"+"chart"
+          // or both "zapisz"+"wykres" — handles minor wording variations.
+          var lower = text.toLowerCase();
+          if (/^save and add to chart/i.test(text)
+            || /^zapisz i dodaj do wykresu/i.test(text)
+            || (lower.includes('save') && lower.includes('chart'))
+            || (lower.includes('zapisz') && lower.includes('wykres'))) {
+            btns[i].click();
+            return text;
+          }
+        }
+      }
+      return null;
+    })()
+  `);
+
+  // If the unsaved-confirmation fired, wait for the save+add to complete
+  if (unsavedDialogHandled) {
+    await new Promise(r => setTimeout(r, 2000));
+  } else {
+    await new Promise(r => setTimeout(r, 1000));
+  }
 
   // Step 7 — collect errors from Monaco markers
   const errors = await evaluate(`
@@ -186,6 +225,7 @@ export async function deployScript({ pinePath }) {
     paneCount: postState.paneCount,
     buttonClicked: addClicked || 'keyboard_shortcut',
     saveMethod: saveClicked ? 'saveButton_class' : 'ctrl_s',
+    unsavedConfirmationDialog: unsavedDialogHandled || null,  // null = dialog never appeared
   };
 }
 
