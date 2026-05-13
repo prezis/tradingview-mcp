@@ -133,10 +133,27 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 8. `pine_new` → create blank indicator/strategy/library
 9. `pine_open` → load a saved script by name
 
-**Canonical deploy recipe** (verified 2026-04-24):
+**Canonical deploy recipe — TWO PATHS** (verified 2026-05-13):
+
+**Path A — file on disk (PREFERRED, single tool call, no token tax):**
 ```
-pine_get_active_slot → pine_set_source(expected_script_name=...) → pine_smart_compile → ui_keyboard{Ctrl+Enter} → chart_get_state (verify entity_id appeared)
+pine_deploy(pine_path="/abs/path/to/script.pine",
+            replace_existing=true, replace_title_match="<indicator-title-substring>")
+  → returns { success, errors[], deploy: {...} }
 ```
+- One tool call reads the file, injects via Monaco setValue, saves, handles Save-dialog, clicks "Add to chart" / "Update on chart" (EN + PL), and returns compile-marker errors.
+- `replace_existing=true` with `replace_title_match` removes prior instance FIRST — avoids 5-slot Essential-plan cap and duplicate buildup.
+- Use this for any Pine that exists on disk (repo files, Desktop drag-drops, etc.). DO NOT use pine_set_source for file-on-disk content — that path embeds 50-100KB of source in the tool call, burning Claude tokens unnecessarily.
+
+**Path B — generated-in-flight source (only when source is computed, not on disk):**
+```
+pine_get_active_slot → pine_set_source(source=..., expected_script_name=...)
+  → pine_smart_compile → ui_keyboard{Ctrl+Enter} → chart_get_state (verify entity_id)
+```
+- Use only when the source is generated programmatically and isn't worth writing to disk first.
+- Always include `expected_script_name` to prevent overwriting the wrong slot.
+
+**Anti-pattern (do NOT repeat 2026-05-13 mistake):** writing a custom Python CDP script to do what `pine_deploy` already does. The MCP exists. Use it.
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode
