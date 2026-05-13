@@ -3,10 +3,21 @@ import { jsonResult } from './_format.js';
 import * as core from '../core/pine-deploy.js';
 
 export function registerPineDeployTools(server) {
-  server.tool('pine_deploy', 'Deploy a Pine Script file to the chart: reads .pine file, injects into editor, saves, handles dialogs, and adds/updates on chart. Returns compilation errors if any.', {
+  server.tool('pine_deploy', 'PREFERRED PATH for deploying Pine Script from a file on disk. Reads .pine file → injects into editor via Monaco setValue → saves (Ctrl+S + Save-dialog handler) → clicks "Add to chart" / "Update on chart" (EN + PL) → returns compile-marker errors. SINGLE-SHOT replacement for the older pine_set_source + pine_save + ui_keyboard{Ctrl+Enter} chain. File-based: source is NEVER embedded in the tool call, so no token-tax for 50-100KB Pine files. Set replace_existing=true with replace_title_match to auto-remove a prior instance of the indicator BEFORE adding the new one, avoiding duplicate-instance buildup (TV Essential plan caps at 5 indicator slots).', {
     pine_path: z.string().describe('Absolute path to a .pine file on disk'),
-  }, async ({ pine_path }) => {
-    try { return jsonResult(await core.deployScript({ pinePath: pine_path })); }
+    replace_existing: z.boolean().optional().describe('If true, call removeStudy(replace_title_match) BEFORE the deploy so any prior instance of this indicator is cleared from the chart. Pairs with replace_title_match to avoid duplicates.'),
+    replace_title_match: z.string().optional().describe('Case-insensitive substring of the prior indicator title to remove when replace_existing=true. E.g. "SMC Eryk", "Popanaczi". If omitted while replace_existing=true, no removal is attempted.'),
+  }, async ({ pine_path, replace_existing, replace_title_match }) => {
+    try {
+      const out = {};
+      if (replace_existing && replace_title_match) {
+        out.removed = await core.removeStudy({ titleMatch: replace_title_match });
+      }
+      out.deploy = await core.deployScript({ pinePath: pine_path });
+      out.success = out.deploy?.success ?? false;
+      out.errors = out.deploy?.errors || [];
+      return jsonResult(out);
+    }
     catch (err) { return jsonResult({ success: false, error: err.message }, true); }
   });
 

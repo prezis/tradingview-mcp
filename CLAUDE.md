@@ -133,10 +133,35 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 8. `pine_new` → create blank indicator/strategy/library
 9. `pine_open` → load a saved script by name
 
-**Canonical deploy recipe** (verified 2026-04-24):
+**Canonical deploy recipe — TWO PATHS** (verified 2026-05-13):
+
+**Path A — file on disk (PREFERRED, single tool call, no token tax):**
 ```
-pine_get_active_slot → pine_set_source(expected_script_name=...) → pine_smart_compile → ui_keyboard{Ctrl+Enter} → chart_get_state (verify entity_id appeared)
+pine_deploy(pine_path="/abs/path/to/script.pine")
+  → returns { success, errors[], preCleaned: {removedCount, removed[]},
+              studyAdded, savedAs, unsavedConfirmationDialog }
 ```
+- One tool call: **pre-clean (remove same-title instances)** → open editor → setValue → save (2500ms wait) → handle "Save Script" dialog → click "Add to chart" → handle "Save and add to chart" confirmation dialog → verify.
+- **Pre-clean is automatic** — derives the indicator title from `indicator("Title", ...)` line in the source and removes any matching instance from the chart BEFORE adding. Avoids duplicates and the "Update on chart" trap.
+- Override the auto-derived title with `preCleanTitleMatch` parameter; pass `""` (empty string) to skip pre-clean entirely.
+- Use this for any Pine on disk (repo files, Desktop drag-drops). DO NOT use `pine_set_source` for file-on-disk content — that path embeds 50-100KB of source in the tool call, burning Claude tokens.
+
+**Path B — generated-in-flight source (only when source is computed, not on disk):**
+```
+pine_get_active_slot → pine_set_source(source=..., expected_script_name=...)
+  → pine_smart_compile → ui_keyboard{Ctrl+Enter} → chart_get_state (verify entity_id)
+```
+- Use only when the source is generated programmatically and isn't worth writing to disk first.
+- Always include `expected_script_name` to prevent overwriting the wrong slot.
+- Same "Update on chart" trap applies — manually call `pine_remove_study` BEFORE `ui_keyboard{Ctrl+Enter}` if a same-title instance exists.
+
+**Critical ordering rules (2026-05-13 lessons):**
+
+1. **Remove existing instances FIRST, before clicking "Add to chart".** Otherwise TV uses "Update on chart" semantics on the toolbar button, which can either (a) double the indicator when text/version differs, or (b) pop the "Cannot add a script with unsaved changes to chart" confirmation dialog when the prior save raced the add click. `pine_deploy` does this automatically via step 0 (preCleanTitleMatch derived from `indicator()` title).
+2. **Wait ≥ 2500ms between saveButton click and "Add to chart" click.** Shorter waits race the save commit and trigger the "Cannot add unsaved" dialog. `pine_deploy` waits 2500ms (was 1200ms before 2026-05-13).
+3. **Handle two distinct dialogs after save+add:** (a) "Save Script" rename dialog (only on first save of a new script), (b) "Save and add to chart" confirmation dialog (when the save→add race fires). The current `deployScript` handles both — see steps 5 and 6b.
+
+**Anti-pattern (do NOT repeat 2026-05-13 mistake):** writing a custom Python CDP script to do what `pine_deploy` already does. The MCP exists. Use it.
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode

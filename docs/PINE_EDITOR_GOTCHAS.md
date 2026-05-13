@@ -268,3 +268,78 @@ js = f"editor.setValue({escaped})"
 ```
 
 **Why**: `json.dumps()` produces a valid JS string literal for any input (the JSON string grammar is a strict subset of JS string grammar). Template literals interpret `${}` as interpolation and require manual escaping of three characters that *will* appear in real Pine code. This MCP server already uses `JSON.stringify(source)` everywhere in `src/core/pine.js` for the same reason — these notes are for anyone writing CDP code outside this repo.
+
+## 18. `Save and add to chart` dialog double-loads the indicator if you click it after `pine_set_source` (2026-05-12)
+
+**The flow that triggers it** (verified live this session):
+
+```
+node scripts/pine_push.js path/to/file.pine    # this DOES the right thing:
+                                               # (1) chart.removeEntity on any existing
+                                               #     instance with same indicator title
+                                               # (2) injects source via JSON.stringify
+                                               # (3) clicks "Add to chart" button (or
+                                               #     skips it if button matcher already
+                                               #     fired the Add via Ctrl+Enter side-effect)
+                                               # → result: ONE instance on chart, clean.
+```
+
+If you THEN follow up with:
+```
+pine_save                                      # Ctrl+S → editor now has unsaved diffs?
+                                               # Sometimes no, sometimes yes.
+ui_keyboard{key:Enter, modifiers:[ctrl]}      # belt-and-suspenders Ctrl+Enter
+```
+…TradingView may open a confirmation dialog: **"Cannot add a script with unsaved changes to chart. Do you want to save them?"** with buttons `No` and `Save and add to chart`.
+
+**Clicking `Save and add to chart` here is what double-loads the indicator** — it commits the unsaved buffer to the slot AND adds a SECOND instance of the indicator to the chart. The first instance was the one `pine_push.js` already added; the dialog click creates a separate `entity_id` on the chart with identical source. `chart_get_state` then returns two `"SMC Eryk R1"` entries.
+
+**Symptom**:
+
+```python
+chart_get_state()
+# {
+#   "studies": [
+#     {"id": "SYzwlK", "name": "SMC Eryk R1"},
+#     {"id": "kxhKzM", "name": "SMC Eryk R1"},   # ← duplicate
+#     ...
+#   ]
+# }
+```
+
+Visual: two copies of the status-line entry, two HUD tables stacked, every label rendered twice (because each instance fires its own `label.new`).
+
+**Why this happens**: `pine_push.js` triggers an "Add to chart" event via its custom button-text matcher (`btn:Add to chartAdd to chart` log line). That commits the buffer state at the moment of the click. But the post-push `pine_save` writes the buffer again, marking the buffer "dirty" relative to the chart-attached version. Then `Ctrl+Enter` (or a manual click) opens the "save unsaved changes?" guard dialog. Clicking the affirmative button re-runs the Add path with the saved buffer — second instance.
+
+**Correct handling**:
+
+| Situation | Action |
+|---|---|
+| Dialog appears after `pine_push.js` already succeeded | Click `No` (or `ui_keyboard{Escape}`). Source is already on chart. |
+| Dialog appears because you ran `pine_set_source` + manual save without `pine_push.js` | Click `Save and add to chart` — this is the first add, not a duplicate. |
+| You want to be 100% sure: read `pine_push.js` stdout | If it printed `✅ Compiled clean — 0 errors` and `Pushed N lines → Pine editor`, the indicator is already on the chart. Any subsequent dialog = dismiss. |
+
+**Cleanup if you already double-loaded**:
+
+```python
+ids = [s["id"] for s in chart_get_state()["studies"] if s["name"] == "SMC Eryk R1"]
+# Remove all but the most recent — usually the LAST id in the list
+for stale_id in ids[:-1]:
+    chart_manage_indicator(action="remove", indicator="SMC Eryk R1", entity_id=stale_id)
+```
+
+**Recommended canonical deploy recipe (updated 2026-05-12)**:
+
+```bash
+# ONE-SHOT deploy. Don't follow up with pine_save + Ctrl+Enter.
+node scripts/pine_push.js /path/to/file.pine
+
+# Verify after:
+chart_get_state                                # exactly ONE entry for your indicator name
+pine_get_errors                                # 0 errors
+data_get_pine_labels(study_filter="MyName")    # check labels render
+```
+
+If `pine_push.js` reports `❌ N errors`, fix the Pine source and re-run `pine_push.js`. Do NOT manually `pine_save` and then handle the dialog — let `pine_push.js` own the full deploy path.
+
+**Cross-ref**: tested live in session `0f7a44f6-...` on 2026-05-12 against `pine/smc-eryk-r1.pine` (1839 lines, 32 RSI+WOGT SKIPs + 58 Rib+ADX independent signals). User flagged the duplicate, removed via `chart_manage_indicator(remove, entity_id=SYzwlK)`.
