@@ -2,6 +2,33 @@
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
+## 🛑 RULE-0 — DO NOT skip this if you intend to UPDATE the chart with new Pine code
+
+**`pine_set_source` + `pine_smart_compile` is NOT a deploy.** Those two only write to the editor buffer and save the slot. The chart instance keeps running OLD compiled code. Symptom: user says "you didn't paste it" because they see no update on the chart while the editor source is correct. This wasted ~20 min on 2026-05-13.
+
+### The ONLY correct deploy paths
+
+- **File on disk** (preferred — single tool call, no token tax):
+  ```
+  pine_deploy(pine_path="/abs/path/to/script.pine")
+  ```
+  Handles pre-clean (removes same-title instances), save, dialog handling, Ctrl+Enter (Add to chart), and verify in one shot.
+
+- **Generated in-flight source** (only when source is computed and not worth writing to disk):
+  ```
+  pine_get_active_slot
+  → pine_set_source(source=..., expected_script_name=...)
+  → pine_smart_compile
+  → ui_keyboard{key:"Enter", modifiers:["ctrl"]}   ← THIS step is what actually deploys
+  → chart_get_state   (verify entity_id appears)
+  ```
+
+**Anti-pattern (do NOT repeat):** push via `pine_set_source`, run `pine_smart_compile`, then tell the user "it's live, refresh" — IT'S NOT LIVE. The chart instance still runs the old code. They have to manually press Ctrl+Enter or click "Add to chart" themselves, which the whole point of MCP automation is to avoid.
+
+**Verify after every deploy:** `chart_get_state` should list the indicator's title with an `entity_id`. If absent, the deploy didn't take — re-run with `pine_deploy` or fire Ctrl+Enter explicitly. Don't claim "live" until the entity is in the studies array.
+
+Full deploy doc with the two-dialog edge cases (Save Script rename + Save-and-add confirmation): see "Work on Pine Script" section + `docs/PINE_EDITOR_WORKFLOW.md`. The 2500ms wait between save and add-click matters — `pine_deploy` already enforces it.
+
 ## 🚨 LAUNCH GOTCHA — read FIRST if tv_health_check fails (Linux snap)
 
 **The `mcp__tradingview__tv_launch` tool invokes the inner binary `/snap/tradingview/current/tradingview` directly. On snap-packaged Linux installs this breaks two things:**

@@ -13,13 +13,12 @@ const CDP = require('chrome-remote-interface');
 const fs = require('fs');
 const path = require('path');
 
+// v16 sweep: top 3 INV11-winners + bottom 3 (where 1:1 lost to 1:2.4)
 const SYMBOLS = [
-  'OANDA:USDCAD','OANDA:EURGBP','OANDA:AUDCAD','OANDA:NZDUSD','OANDA:EURUSD',
-  'OANDA:AUDUSD','OANDA:GBPNZD','OANDA:USDJPY','OANDA:NZDJPY','OANDA:CHFJPY',
-  'OANDA:EURNZD','OANDA:GBPJPY','OANDA:AUDCHF','OANDA:CADJPY','OANDA:EURJPY',
-  'OANDA:AUDJPY','OANDA:EURAUD','OANDA:NZDCHF','OANDA:CADCHF','OANDA:EURCAD',
-  'OANDA:AUDNZD','OANDA:GBPCHF','OANDA:GBPCAD','OANDA:USDCHF','OANDA:GBPUSD',
-  'OANDA:GBPAUD','OANDA:NZDCAD','OANDA:EURCHF'
+  // Top 3 INV11
+  'OANDA:EURGBP','OANDA:USDCAD','OANDA:EURCAD',
+  // Bottom 3 (where INV11 lost)
+  'OANDA:CADCHF','OANDA:NZDCAD','OANDA:EURUSD'
 ];
 const TFS = ['15', '60', '240'];
 
@@ -66,6 +65,11 @@ const SCRAPE_JS = `
             var ikey2 = 'INV11-'+i11[2];
             counts[ikey2] = (counts[ikey2]||0)+1;
           }
+          var i12 = t.match(/^([\\u2713\\u2717]) INV1:1\\.2-(WIN|LOSS)/);
+          if (i12) {
+            var ikey3 = 'INV12-'+i12[2];
+            counts[ikey3] = (counts[ikey3]||0)+1;
+          }
         });
       } catch(e){}
     }
@@ -89,7 +93,7 @@ const SET_SYMBOL_TF_JS = (sym, tf) => `
 })()
 `;
 
-const OUT_DIR = "/home/palyslaf0s/ai/smc-eryk/research/lab/v15-sweep";
+const OUT_DIR = "/home/palyslaf0s/ai/smc-eryk/research/lab/v16-sweep";
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 async function main() {
