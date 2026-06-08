@@ -343,3 +343,55 @@ data_get_pine_labels(study_filter="MyName")    # check labels render
 If `pine_push.js` reports `❌ N errors`, fix the Pine source and re-run `pine_push.js`. Do NOT manually `pine_save` and then handle the dialog — let `pine_push.js` own the full deploy path.
 
 **Cross-ref**: tested live in session `0f7a44f6-...` on 2026-05-12 against `pine/smc-eryk-r1.pine` (1839 lines, 32 RSI+WOGT SKIPs + 58 Rib+ADX independent signals). User flagged the duplicate, removed via `chart_manage_indicator(remove, entity_id=SYzwlK)`.
+
+---
+
+## 19. `ui_fullscreen` hides the Pine editor → every deploy/add then silently fails on an INVISIBLE confirm dialog (2026-06-03)
+
+**The chain that ate ~15 tool-calls in one session:**
+
+1. Toggled `ui_fullscreen` to grab a clean chart screenshot (editor out of the way). Fullscreen **hides the Pine editor pane AND the side panels** — the "Panels hidden. Press Esc" mode.
+2. A `pine_deploy(replace_existing=true)` then **removed** the on-chart indicator and saved the new source — but returned `studyAdded:false`. Every retry (`pine_smart_compile`, `ui_keyboard{Enter,ctrl}` ×4, re-`pine_deploy` ×3) ALSO returned `studyAdded:false`, and `chart_get_state` showed the indicator **off the chart entirely**.
+3. The real blocker was a **modal `chart_get_state` cannot see**: `data_name="confirm-dialog"` → *"Cannot add a script with unsaved changes to chart. Do you want to save them?"* with `[No]` / `[Save and add to chart]`. With the editor hidden by fullscreen, the Add never completed and the dialog just sat there, invisible to every status call.
+
+**The tell**: `pine_deploy`/`Ctrl+Enter` returns `studyAdded:false` **repeatedly** AND `chart_get_state` shows your indicator is **NOT** on the chart. That combination = a hidden blocking dialog — and very likely a fullscreen state you toggled yourself.
+
+> **Variant — editor PANEL simply CLOSED (2026-06-07, SMC Cockpit #192 session).** Same `studyAdded:false` ×2 + empty `studies[]`, but NO fullscreen: the pine-editor **pane was closed** (`ui_open_panel(pine-editor, open)` returned `was_open:false`). With no editor pane mounted, `pine_deploy`'s internal Ctrl+Enter has nothing to act on → `studyAdded:false` every retry. **Recovery (fast, verified):** `ui_open_panel(pine-editor, open)` → `ui_keyboard{key:Enter, modifiers:[ctrl]}` → the *"Cannot add a script with unsaved changes to chart"* dialog appears → `ui_click(by="text", value="Save and add to chart")` → `chart_get_state` shows the fresh `entity_id`. **Generalized tell:** `studyAdded:false` + indicator OFF chart = **editor not interactable** (closed panel OR fullscreen-collapsed) AND/OR a hidden confirm-dialog. Check the panel first (`ui_open_panel` is the cheapest probe), then the modal. Note: `savedAs` may show a STALE slot title (e.g. `v1.7.0`) while the source `indicator()` title is current (`v1.10.61`) — slot name ≠ compiled title; don't panic.
+
+**The fix (reliable):**
+```
+# 1. Exit the fullscreen YOU turned on (it hid the editor):
+#    ⚠️ 2026-06-07 (operator-corrected, the HARD way): ui_fullscreen() TOGGLE-BACK is NOT reliable. It can
+#    leave the Pine editor pane COLLAPSED to 0×0 — Monaco is in the DOM but zero-size, so the "Add to chart"
+#    button never renders → every deploy/Ctrl+Enter/pine_compile falls back to keyboard_shortcut and returns
+#    studyAdded:false FOREVER (chart_manage_indicator, JS .click()/pointer-events on pine-dialog-button all
+#    fail too — the panel is genuinely collapsed). The RELIABLE exit from TV fullscreen is the ESC KEY:
+ui_keyboard(key="Escape")                           # ← THE ACTUAL FIX: cleanly exits fullscreen, editor returns full-size
+ui_open_panel(panel="pine-editor", action="open")   # then ensure the editor is docked/visible
+# Confirm Monaco is back BEFORE adding: ui_evaluate("JSON.stringify(document.querySelector('.monaco-editor').getBoundingClientRect())")
+#   → width/height MUST be > 0 (e.g. 724×1237). If still 0×0, press Escape again.
+# THEN: ui_evaluate focus the textarea (".monaco-editor textarea".focus()) → ui_keyboard Ctrl+Enter → handle the
+#   "Save and add to chart" dialog (it appears once the buffer differs from the on-chart copy).
+
+# 2. The confirm dialog is invisible to chart_get_state — find it in the DOM:
+ui_find_element(query="Save and add to chart", strategy="text")
+#   -> the <button> at e.g. {x:1248.69, y:724, width:178.3, height:34}
+
+# 3. Click the button's CENTER, not its (x,y) top-left corner:
+#    center = (x + width/2, y + height/2) = (1338, 741)
+ui_mouse_click(x=1338, y=741)        # clicking (1248,724) lands just OUTSIDE the edge → misses
+
+# 4. Verify:
+chart_get_state()                    # indicator now present with a fresh entity_id
+```
+
+**Which dialog button is correct** (do NOT confuse with #18's duplicate case):
+- Indicator is **OFF** the chart (`chart_get_state` shows it missing) → **`Save and add to chart`** — first add, no duplicate.
+- Indicator is **ALREADY ON** the chart → `Save and add to chart` makes a SECOND copy → click **`No`**/Escape (see #18).
+
+**Root prevention — never be surprised by your own fullscreen:**
+- Treat `ui_fullscreen` as a **borrow**: toggle ON for the screenshot, toggle OFF in the very next step. NEVER leave the chart fullscreen across a `pine_deploy`.
+- `ui_mouse_click` uses page pixels that match `ui_find_element`'s coords — but `find_element` returns **top-left + width/height**; always compute the **center** before clicking a button.
+- Hook installed: `~/.claude/enforcements/tv-fullscreen-guard.py` (PostToolUse on `mcp__tradingview__ui_fullscreen`) prints a reminder every time fullscreen is toggled, so "editor is now hidden" lands in-context before the next deploy.
+
+**MCP-extension TODO** (`~/ai/tradingview-mcp`): `pine_deploy`/`pine_smart_compile` should, on `studyAdded:false`, auto-scan for the `data_name="confirm-dialog"` modal and click `Save and add to chart` when the indicator is absent from the chart (or `No` when present). That makes this whole class self-healing. Tracked here until implemented.

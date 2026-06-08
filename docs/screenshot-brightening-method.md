@@ -48,6 +48,26 @@ crop.save('shot-crop.png')
 ```
 **Anti-pattern:** Reading the full-frame screenshot and squinting; re-capturing at the same zoom hoping for clarity. Crop the ROI instead. Operator 2026-06-08: *"masz problem dalej z rozdzielczością ... daj sobie wyższą jakość"* — the fix is cropping, not re-capturing.
 
+## Chart zoom: go WIDE, get detail from the CROP (not chart-zoom)
+
+> **Supersedes the "narrow first" advice** in the §"HD detail — crop the ROI" section above. Step 1 there said `chart_set_visible_range` to *a few bars*; for structure-spanning features (CHoCH/BOS/OB/FVG) that is **wrong** — go WIDE first, then crop. Operator-coached 2026-06-08: *"teraz masz lepszą jakość więc nie musisz zoomować tak że 4 świeczki na ekran się robią"* (now you have better quality so you don't need to zoom so 4 candles fill the screen).
+
+**Core principle:** detail comes from **CROP + 2× LANCZOS upscale + brighten**, NOT from chart zoom. The HD pipeline (PIL brighten 1.7/1.3/1.4 + ROI-crop + 2× upscale) already gives enough resolution off a WIDE native frame. Do not over-zoom the chart to a handful of candles — it obscures structure-spanning context.
+
+**The anti-pattern (cost an entire 2026-06-08 session — many wasted deploy/screenshot cycles):** the agent kept calling `chart_set_visible_range` to a TINY window (~4–12 candles, e.g. a single cross-bar ± a few hours) "to see detail". That MISSES structure-spanning elements: a **CHoCH/BOS line spans the WHOLE structure** (e.g. ~9 days, Bear-BoS-High → CHoCH), and its **TEXT LABEL sits at the line MIDPOINT** — far from the event bar. A tight zoom shows only the line's right END, no label → the agent wrongly concluded "the indicator doesn't draw the line", when a WIDE view (operator's: ~2 weeks / 60+ candles) showed it instantly.
+
+**The corrected method (the DEFAULT now):**
+1. **Chart zoom: go WIDE** — frame the WHOLE relevant structure (the full swing/leg/reversal, typically **40–120 candles**), NOT a handful of candles. When verifying a line/label that may span bars (CHoCH, BOS, OB, FVG), the WHOLE span must be in view.
+2. `capture_screenshot(region="chart", method="cdp")` → native PNG (2183×1252 or 3207×1261).
+3. **Get DETAIL from the CROP, not the chart zoom:** PIL ROI-crop the area of interest + 2× LANCZOS upscale + brighten (1.7/1.3/1.4). Reading a wide native frame at full res after crop+upscale gives plenty of detail.
+4. **`chart_set_visible_range` is FLAKY** — it clamps/jumps (observed jumping to a DIFFERENT MONTH, and ending one bar short of the target). ALWAYS check the `actual` range in the return vs `requested`; if it clamped wrong, re-set or adjust. Don't assume the view is where you asked.
+5. **Heuristic:** if your chart shows fewer than ~25–30 candles you are probably **OVER-ZOOMED** for structure verification — widen, then crop.
+
+### 2026-06-08 CHoCH-line case study
+A full session was burned: the agent repeatedly zoomed `chart_set_visible_range` to ~4–12 candles around the cross-bar to "verify the CHoCH line", saw only the line's right end (the midpoint TEXT label was off-screen), and wrongly concluded the indicator wasn't drawing the line — patching/redeploying across many cycles. It resolved instantly once the view was widened to the operator's ~2-week / 60+ candle window: the full Bear-BoS-High → CHoCH line AND its midpoint label were both in frame, then ROI-cropped + 2× upscaled for the final read.
+
+**Takeaway:** structure verification needs a WIDE view; rely on the CROP+UPSCALE pipeline for the high-res detail — never on chart zoom.
+
 ## Cross-links
 - `~/ai/bos-choch/docs/drawing-chain-map.md` — where each dot is drawn (text vs circle sources)
 - `~/ai/global-graph/anti-patterns/ap-pine-smc.md` — the catalogued failures this method prevents

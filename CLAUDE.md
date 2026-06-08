@@ -27,6 +27,8 @@
 
 **Verify after every deploy:** `chart_get_state` should list the indicator's title with an `entity_id`. If absent, the deploy didn't take — re-run with `pine_deploy` or fire Ctrl+Enter explicitly. Don't claim "live" until the entity is in the studies array.
 
+**Verify-via-debug BEFORE claiming a FIX works (operator-coached 2026-06-07):** "live on chart" ≠ "fix works". After a structure/logic change, READ the debug probe (`data_get_pine_labels` on the `showDbgBars` labels) at the OPERATOR'S example region (move the debug-window timestamps to HIS date/time first — not a region of your own choosing), CONFIRM the expected committed state (cite bar/field/value), and SCREENSHOT it yourself ("sam zobaczyć") — THEN tell the operator "check / sprawdź". The debug labels exist to confirm BEFORE handoff; never run the "done→check→still-not-done" loop by claiming a fix on faith. Mirror anchor: global CLAUDE.md "Verify-Via-Debug BEFORE Claiming Done".
+
 Full deploy doc with the two-dialog edge cases (Save Script rename + Save-and-add confirmation): see "Work on Pine Script" section + `docs/PINE_EDITOR_WORKFLOW.md`. The 2500ms wait between save and add-click matters — `pine_deploy` already enforces it.
 
 ## 🚨 LAUNCH GOTCHA — read FIRST if tv_health_check fails (Linux snap)
