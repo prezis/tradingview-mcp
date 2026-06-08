@@ -26,6 +26,28 @@
 ## VERIFY-VIA-DEBUG implication
 Label-data (`data_get_pine_labels`) gives REAL values, but it returns TEXT + price, not "is this a circle or a text." Multiple sources emit the same text ("LL") with/without a circle (see `bos-choch/docs/drawing-chain-map.md` Group A). **To verify a DOT count, you need the brightened screenshot — the trace alone overcounts.** Read the screenshot on the OPERATOR'S example region, cite bar/price, THEN say "sprawdź".
 
+## HD detail — crop the ROI, never Read the full frame (combine with brighten above)
+**Problem:** even a correctly-brightened capture is downscaled by the Read tool to ~600px wide for display → small grey `style_circle` dots, thin BoS/CHoCH lines and per-bar `showDbgBars` labels blur into noise. 2026-06-08: repeated FAILED dot-count verification on the #207 LL-jump (could not tell 1 dot from 2) until this.
+**Root cause:** the capture is already native res (e.g. **3207×1261**); the loss is ENTIRELY the Read-on-display downscale. Reading the whole frame spends the pixel budget on empty chart.
+**Fix:** crop the full-res PNG to the Region Of Interest with PIL + upscale 2× LANCZOS, THEN Read the crop. Fewer source pixels per Read → each feature gets more display pixels → sharp. PIL via `python3` is available; ImageMagick `convert`/`magick` are NOT installed on this box.
+
+1. **Narrow first:** `chart_set_visible_range(from,to)` to a few bars (a few hours either side of the target bar) → bigger features. (Compute unix ts with `date -u -d '... ' +%s`.)
+2. `capture_screenshot(region="chart")` → native PNG.
+3. PIL `.size` for dims.
+4. Crop the ROI band (swing-low dots → center-bottom, e.g. y `0.45..0.92`; tune fractions per feature).
+5. Upscale 2× LANCZOS.
+6. *(optional)* brighten the crop with the PIL Brightness/Contrast/Color block above.
+7. Read the crop.
+
+```python
+from PIL import Image
+im = Image.open('shot.png'); w,h = im.size
+crop = im.crop((int(w*0.20), int(h*0.45), int(w*0.80), int(h*0.92)))   # ROI fractions — TUNE per feature
+crop = crop.resize((crop.width*2, crop.height*2), Image.LANCZOS)
+crop.save('shot-crop.png')
+```
+**Anti-pattern:** Reading the full-frame screenshot and squinting; re-capturing at the same zoom hoping for clarity. Crop the ROI instead. Operator 2026-06-08: *"masz problem dalej z rozdzielczością ... daj sobie wyższą jakość"* — the fix is cropping, not re-capturing.
+
 ## Cross-links
 - `~/ai/bos-choch/docs/drawing-chain-map.md` — where each dot is drawn (text vs circle sources)
 - `~/ai/global-graph/anti-patterns/ap-pine-smc.md` — the catalogued failures this method prevents
