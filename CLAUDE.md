@@ -50,9 +50,21 @@ sleep 2
 # 2. Launch via the SNAP WRAPPER (NOT inner binary) with CDP flag,
 #    inside a tmux pane so it inherits the user shell env and doesn't die
 #    when the launching process exits.
+#    ⚠️ CRITICAL (anchor 2026-07-05): the `sol` tmux session has NO DISPLAY exported
+#    (`tmux show-environment -t sol DISPLAY` → `-DISPLAY`). Without DISPLAY + XDG_RUNTIME_DIR
+#    the GUI app dies in-pane with `ptrace: Operation not permitted` + `Segmentation fault
+#    (core dumped)` and CDP never binds. ALWAYS prefix both (X server :1, runtime /run/user/1000).
 tmux new-window -t sol: -n tv-launcher
-tmux send-keys -t sol:tv-launcher "/snap/bin/tradingview --remote-debugging-port=9222" Enter
-# Wait ~6s for TV to open + CDP port to bind.
+tmux send-keys -t sol:tv-launcher "DISPLAY=:1 XDG_RUNTIME_DIR=/run/user/$(id -u) /snap/bin/tradingview --remote-debugging-port=9222" Enter
+# Wait ~6s for TV to open + CDP port to bind. Then confirm the 9222 owner uses the SNAP
+# profile (= logged-in): ps -ef | grep 'remote-debugging-port=9222' | grep -oE 'user-data-dir=[^ ]*'
+#   → must be .../snap/tradingview/72/.config/TradingView, NOT ~/.config/TradingView.
+
+# 🚫 NEVER run mcp__tradingview__tv_launch on this snap host (anchor 2026-07-05): it invokes the
+#    inner binary on profile ~/.config/TradingView (logged-OUT) which grabs 9222 FIRST, blocking
+#    the operator's real snap-profile (logged-in, icon-launched) instance. Symptom: browser login
+#    redirects to the operator's instance, the tv_launch one stays un-authed. Prefer the operator
+#    clicking his TV icon (the .desktop override already carries the CDP flag) over any auto-launch.
 
 # 3. Verify:
 curl -s --max-time 3 http://localhost:9222/json/version
